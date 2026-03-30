@@ -210,3 +210,222 @@ Build a VS Code / Cursor extension that lets users select rendered text in a mar
 
 4. **User confusion with dual previews**
    - Mitigation: clear command naming, optional auto-open, concise onboarding in README.
+
+---
+
+## Agent Prompt Decomposition
+
+Use the prompts below one-by-one with an AI coding agent. Each step is self-contained and includes deliverables and acceptance criteria.
+
+### Step 1: Bootstrap extension project
+
+**Prompt to agent:**
+
+```text
+Create a TypeScript VS Code extension scaffold for project "ask-markdown".
+Requirements:
+- Activation on markdown files.
+- Commands: ask-markdown.openPreview and ask-markdown.askAboutSelection.
+- Source folders: src/ and media/.
+- Build tooling with TypeScript and esbuild.
+
+Deliverables:
+- package.json contributions and scripts
+- tsconfig.json
+- src/extension.ts with command registration
+- placeholder files: src/previewProvider.ts, src/selectionBridge.ts, src/sourceMapper.ts, src/commands.ts, media/preview.js, media/preview.css
+
+Acceptance:
+- Project compiles successfully.
+- Both commands appear in command palette.
+```
+
+### Step 2: Implement custom markdown preview panel
+
+**Prompt to agent:**
+
+```text
+Implement a webview-based markdown preview for ask-markdown.
+Requirements:
+- ask-markdown.openPreview opens a panel beside the active editor.
+- Render active markdown document using markdown-it.
+- On document edits, refresh preview content.
+- Keep implementation modular in src/previewProvider.ts.
+
+Deliverables:
+- Working preview panel with rendered markdown.
+- Basic CSS theme support via VS Code CSS vars.
+
+Acceptance:
+- Opening command renders the current .md file.
+- Editing markdown updates preview without reopening.
+```
+
+### Step 3: Add source-line mapping metadata
+
+**Prompt to agent:**
+
+```text
+Add source line metadata to rendered markdown blocks.
+Requirements:
+- Add data-source-line and data-source-line-end attributes where token.map is available.
+- Cover common block tokens: headings, paragraphs, list items, blockquotes, code blocks, tables.
+- Keep metadata generation in a dedicated helper/plugin.
+
+Deliverables:
+- markdown-it integration that emits source attributes in HTML.
+- Unit tests for metadata injection.
+
+Acceptance:
+- Rendered HTML shows expected data-source-line attributes on block elements.
+```
+
+### Step 4: Capture selection in webview and send to extension host
+
+**Prompt to agent:**
+
+```text
+Implement preview-side selection capture in media/preview.js.
+Requirements:
+- Detect non-empty text selection.
+- Resolve nearest source-line metadata for anchor/focus nodes.
+- Show a floating "Ask Cursor" button near selection.
+- On click, post message:
+  { type: "askAboutSelection", text, startLine, endLine }.
+
+Deliverables:
+- Selection detection logic.
+- Floating button UI and interactions.
+- Message bridge to extension host.
+
+Acceptance:
+- Selecting rendered text shows button.
+- Clicking button sends correct payload to extension.
+```
+
+### Step 5: Bridge message to source editor selection
+
+**Prompt to agent:**
+
+```text
+Implement extension-host message handling in src/selectionBridge.ts.
+Requirements:
+- Receive askAboutSelection messages from webview.
+- Open source markdown document in editor.
+- Convert line info into vscode.Range via sourceMapper.
+- Programmatically select that source range.
+
+Deliverables:
+- Message handler wiring from preview provider.
+- sourceMapper implementation for robust line-to-range conversion.
+
+Acceptance:
+- After selecting text in preview and clicking Ask, the source editor highlights mapped lines.
+```
+
+### Step 6: Add AI command invocation with fallback behavior
+
+**Prompt to agent:**
+
+```text
+Implement AI invocation after source selection.
+Requirements:
+- Attempt configured command IDs via vscode.commands.executeCommand.
+- If command fails, fallback to:
+  1) keep source selection,
+  2) copy selected text to clipboard,
+  3) show actionable instruction message.
+- Make command IDs configurable in extension settings.
+
+Deliverables:
+- Invocation service/helper.
+- Settings schema in package.json.
+- Clear user notifications for fallback path.
+
+Acceptance:
+- Successful path triggers configured command.
+- Failure path degrades gracefully without crashes.
+```
+
+### Step 7: UX polish and optional sync features
+
+**Prompt to agent:**
+
+```text
+Polish UX for ask-markdown extension.
+Requirements:
+- Improve floating button positioning and dismissal rules.
+- Add optional preview->source reveal on block click.
+- Add status bar item when preview bridge is active.
+- Ensure keyboard accessibility and theme compatibility.
+
+Deliverables:
+- Updated preview JS/CSS and extension status-bar wiring.
+- Settings toggles for optional behaviors.
+
+Acceptance:
+- Interaction feels stable in light/dark themes.
+- No broken focus traps; keyboard navigation works.
+```
+
+### Step 8: Testing and validation suite
+
+**Prompt to agent:**
+
+```text
+Add tests for ask-markdown core behavior.
+Requirements:
+- Unit tests for source mapper and metadata injection.
+- Integration test for selection flow (preview event -> editor range selection).
+- Document manual QA checklist in README.
+
+Deliverables:
+- Test files and scripts.
+- README section for manual test scenarios and expected results.
+
+Acceptance:
+- Tests pass locally.
+- Manual QA checklist covers markdown edge cases.
+```
+
+### Step 9: Package and release readiness
+
+**Prompt to agent:**
+
+```text
+Prepare ask-markdown for packaging and release.
+Requirements:
+- Ensure production build output is clean.
+- Add README usage docs with screenshots placeholders.
+- Add CHANGELOG and LICENSE.
+- Configure .vscodeignore for lean package.
+
+Deliverables:
+- Release-ready repository state.
+- Verified .vsix generation command documented.
+
+Acceptance:
+- Extension packages successfully.
+- Docs explain install, usage, settings, and known limitations.
+```
+
+### Step 10: Hardening pass for Cursor compatibility
+
+**Prompt to agent:**
+
+```text
+Run a hardening pass focused on Cursor compatibility.
+Requirements:
+- Enumerate available command IDs and log capability detection at activation.
+- Ensure extension still works when direct AI command hook is unavailable.
+- Add troubleshooting section for command ID changes between Cursor versions.
+
+Deliverables:
+- Capability detection utility.
+- Improved fallback messaging.
+- Troubleshooting docs in README.
+
+Acceptance:
+- Core flow (selection -> source highlight) works regardless of AI command availability.
+- Users get clear guidance when integration command cannot be executed.
+```
