@@ -4,20 +4,86 @@
 
 Build a VS Code / Cursor extension that lets users select rendered text in a markdown preview and ask Cursor AI about that selection. The extension bridges markdown preview webview selection and editor-selection-based AI workflows.
 
+This document assumes you work from **WSL2 (Linux)** and use **Cursor or VS Code with the Remote - WSL** extension so the editor runs against your Linux filesystem and toolchain.
+
 ---
 
-## Phase 1: Project Scaffold
+## Prerequisites (WSL): what to install
 
-**Goal:** Set up extension boilerplate and tooling.
+Install these once in your WSL distro (Ubuntu is typical). Run updates first if the distro is new.
+
+```bash
+sudo apt update && sudo apt upgrade -y
+```
+
+| Need | Purpose |
+|------|---------|
+| **Node.js LTS** (20.x or 22.x) | Extension build, `npm`, `npx` |
+| **Git** | Clone and version control |
+| **build-essential** | Optional; some native npm deps may need a compiler |
+
+**Node.js (recommended: nvm)** — keeps Node versions isolated and matches many extension docs.
+
+```bash
+# Install nvm (official installer; check https://github.com/nvm-sh/nvm for latest)
+curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.1/install.sh | bash
+# Reload shell or: source ~/.bashrc
+command -v nvm || export NVM_DIR="$HOME/.nvm" && [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
+
+nvm install --lts
+nvm use --lts
+node -v
+npm -v
+```
+
+**Alternative: Node from your distro** (simpler, one version system-wide):
+
+```bash
+sudo apt install -y git build-essential
+# Example: Node 20 from NodeSource (verify current instructions at https://github.com/nodesource/distributions)
+curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
+sudo apt install -y nodejs
+node -v
+npm -v
+```
+
+**Scaffolding the official VS Code extension template** (used in Phase 1):
+
+```bash
+npm install -g yo generator-code
+```
+
+**Packaging / publishing** (later, Phase 8):
+
+```bash
+npm install -g @vscode/vsce
+```
+
+**Editor**: Install **Cursor** or **VS Code** on Windows, enable **Remote - WSL**, and open the repo folder from WSL (`File → Open Folder` → `\\wsl$\...` or use “Open in WSL” from a `\\wsl.localhost\...` path). Extension development and **F5 “Run Extension”** work from the WSL-connected window.
+
+---
+
+## Phase 1 — Bootstrap: scaffold and dependencies
+
+**Goal:** Create the extension project, install npm dependencies, and verify a compile.
 
 ### Tasks
 
 1. **Initialize extension project**
-   - Use `yo code` to scaffold a TypeScript VS Code extension.
+   - From WSL, `cd` to where you keep projects (e.g. `~/GitHub/SIDES`).
+   - Run `yo code` and choose **New Extension (TypeScript)**.
    - Target `vscode` engine `^1.85.0` (or latest stable).
-   - Activation event: `onLanguage:markdown`.
+   - Activation event: `onLanguage:markdown` (adjust in generated `package.json` if needed).
 
-2. **Create project structure**
+```bash
+cd ~/GitHub/SIDES   # or your parent directory
+yo code
+# Follow prompts; then:
+cd ask-markdown     # or the folder name you chose
+npm install
+```
+
+2. **Create / align project structure** (evolve the scaffold toward this layout as you implement):
 
    ```text
    ask-markdown/
@@ -36,19 +102,57 @@ Build a VS Code / Cursor extension that lets users select rendered text in a mar
    └── README.md
    ```
 
-3. **Dependencies**
+3. **Dependencies** (add with `npm install` as you adopt them)
    - Runtime: `markdown-it`.
    - Mapping: `markdown-it-source-map` (or custom plugin).
    - Dev: `typescript`, `@types/vscode`, `esbuild`.
 
-4. **Contribute extension commands**
+```bash
+npm install markdown-it markdown-it-source-map
+npm install -D esbuild
+# typescript and @types/vscode are usually already from yo code
+```
+
+4. **Contribute extension commands** in `package.json`
    - `ask-markdown.openPreview`
    - `ask-markdown.askAboutSelection`
    - Optional keybinding: `Ctrl+Shift+M` to open custom preview.
 
+**Verify:**
+
+```bash
+npm run compile
+# or: npm run build — use whatever script yo code generated
+```
+
 ---
 
-## Phase 2: Custom Markdown Preview Webview
+## Phase 2 — Daily development: commands you run from WSL
+
+**Goal:** Repeatable edit → build → run loop.
+
+| Action | Command (from repo root in WSL) |
+|--------|----------------------------------|
+| One-off compile | `npm run compile` |
+| Watch mode (if configured) | `npm run watch` |
+| Run tests (when added) | `npm test` |
+| Lint (if added) | `npm run lint` |
+
+**Run the extension:** In Cursor/VS Code (WSL window), open the repo → **Run → Start Debugging** or press **F5**. A new **Extension Development Host** window opens with your extension loaded.
+
+**Package a VSIX (when ready):**
+
+```bash
+npm run compile
+vsce package
+# Produces e.g. ask-markdown-0.0.1.vsix
+```
+
+Install locally: **Extensions** view → **…** → **Install from VSIX…** and pick the file.
+
+---
+
+## Phase 3 — Implementation: custom markdown preview webview
 
 **Goal:** Render markdown with source-line annotations and capture selection.
 
@@ -85,7 +189,7 @@ Build a VS Code / Cursor extension that lets users select rendered text in a mar
 
 ---
 
-## Phase 3: Selection Bridge (Webview -> Editor -> AI)
+## Phase 4 — Implementation: selection bridge (webview → editor → AI)
 
 **Goal:** Route rendered selection into Cursor AI via source selection.
 
@@ -113,7 +217,28 @@ Build a VS Code / Cursor extension that lets users select rendered text in a mar
 
 ---
 
-## Phase 4: UX Polish
+## Phase 5 — Integration: Cursor command discovery
+
+**Goal:** Identify a stable strategy for sending selected context to AI.
+
+### Tasks
+
+1. **Enumerate available commands**
+   - Use `vscode.commands.getCommands(true)` and filter for relevant chat/ai/cursor terms.
+
+2. **Validate command behavior**
+   - Test commands with selected markdown ranges and argument payloads.
+   - Capture version-specific notes.
+
+3. **Design for resilience**
+   - Graceful fallback when commands are unavailable or changed.
+   - Add diagnostics logs for supportability.
+
+**Optional one-off in DevTools / temporary command:** log commands while exercising the UI; no separate WSL CLI is required beyond running the extension host.
+
+---
+
+## Phase 6 — Polish: UX and settings
 
 **Goal:** Make the feature feel native and ergonomic.
 
@@ -124,7 +249,7 @@ Build a VS Code / Cursor extension that lets users select rendered text in a mar
    - Dismiss on blur / empty selection.
 
 2. **Sync behavior**
-   - Optional scroll sync preview <-> source editor.
+   - Optional scroll sync preview ↔ source editor.
    - Click preview block to reveal source.
 
 3. **Theming and accessibility**
@@ -140,32 +265,17 @@ Build a VS Code / Cursor extension that lets users select rendered text in a mar
 
 ---
 
-## Phase 5: Cursor Integration Discovery
-
-**Goal:** Identify stable command strategy for sending selected context to AI.
-
-### Tasks
-
-1. **Enumerate available commands**
-   - Use `vscode.commands.getCommands(true)` and filter for relevant chat/ai/cursor terms.
-
-2. **Validate command behavior**
-   - Test commands with selected markdown ranges and argument payloads.
-   - Capture version-specific notes.
-
-3. **Design for resilience**
-   - Graceful fallback when commands are unavailable or changed.
-   - Add diagnostics logs for supportability.
-
----
-
-## Phase 6: Testing
+## Phase 7 — Quality: testing
 
 ### Tasks
 
 1. **Unit tests**
    - Source-line mapping behavior.
    - Markdown-it data attribute injection.
+
+```bash
+npm test
+```
 
 2. **Integration tests**
    - Open markdown, render preview, simulate selection, verify editor range selection.
@@ -179,13 +289,18 @@ Build a VS Code / Cursor extension that lets users select rendered text in a mar
 
 ---
 
-## Phase 7: Packaging and Release
+## Phase 8 — Ship: packaging and release
 
 ### Tasks
 
 1. **Build and package**
-   - Bundle extension with `esbuild`.
+   - Bundle extension with `esbuild` (if that is your pipeline).
    - Produce `.vsix` via `vsce package`.
+
+```bash
+npm run compile
+vsce package
+```
 
 2. **Documentation**
    - Usage flow screenshots/GIF.
@@ -194,6 +309,11 @@ Build a VS Code / Cursor extension that lets users select rendered text in a mar
 3. **Publish**
    - Publish to VS Code marketplace for Cursor compatibility.
    - Add issue templates for integration regressions.
+
+```bash
+# After vsce login / PAT setup (see VS Code publishing docs)
+vsce publish
+```
 
 ---
 
@@ -210,222 +330,3 @@ Build a VS Code / Cursor extension that lets users select rendered text in a mar
 
 4. **User confusion with dual previews**
    - Mitigation: clear command naming, optional auto-open, concise onboarding in README.
-
----
-
-## Agent Prompt Decomposition
-
-Use the prompts below one-by-one with an AI coding agent. Each step is self-contained and includes deliverables and acceptance criteria.
-
-### Step 1: Bootstrap extension project
-
-**Prompt to agent:**
-
-```text
-Create a TypeScript VS Code extension scaffold for project "ask-markdown".
-Requirements:
-- Activation on markdown files.
-- Commands: ask-markdown.openPreview and ask-markdown.askAboutSelection.
-- Source folders: src/ and media/.
-- Build tooling with TypeScript and esbuild.
-
-Deliverables:
-- package.json contributions and scripts
-- tsconfig.json
-- src/extension.ts with command registration
-- placeholder files: src/previewProvider.ts, src/selectionBridge.ts, src/sourceMapper.ts, src/commands.ts, media/preview.js, media/preview.css
-
-Acceptance:
-- Project compiles successfully.
-- Both commands appear in command palette.
-```
-
-### Step 2: Implement custom markdown preview panel
-
-**Prompt to agent:**
-
-```text
-Implement a webview-based markdown preview for ask-markdown.
-Requirements:
-- ask-markdown.openPreview opens a panel beside the active editor.
-- Render active markdown document using markdown-it.
-- On document edits, refresh preview content.
-- Keep implementation modular in src/previewProvider.ts.
-
-Deliverables:
-- Working preview panel with rendered markdown.
-- Basic CSS theme support via VS Code CSS vars.
-
-Acceptance:
-- Opening command renders the current .md file.
-- Editing markdown updates preview without reopening.
-```
-
-### Step 3: Add source-line mapping metadata
-
-**Prompt to agent:**
-
-```text
-Add source line metadata to rendered markdown blocks.
-Requirements:
-- Add data-source-line and data-source-line-end attributes where token.map is available.
-- Cover common block tokens: headings, paragraphs, list items, blockquotes, code blocks, tables.
-- Keep metadata generation in a dedicated helper/plugin.
-
-Deliverables:
-- markdown-it integration that emits source attributes in HTML.
-- Unit tests for metadata injection.
-
-Acceptance:
-- Rendered HTML shows expected data-source-line attributes on block elements.
-```
-
-### Step 4: Capture selection in webview and send to extension host
-
-**Prompt to agent:**
-
-```text
-Implement preview-side selection capture in media/preview.js.
-Requirements:
-- Detect non-empty text selection.
-- Resolve nearest source-line metadata for anchor/focus nodes.
-- Show a floating "Ask Cursor" button near selection.
-- On click, post message:
-  { type: "askAboutSelection", text, startLine, endLine }.
-
-Deliverables:
-- Selection detection logic.
-- Floating button UI and interactions.
-- Message bridge to extension host.
-
-Acceptance:
-- Selecting rendered text shows button.
-- Clicking button sends correct payload to extension.
-```
-
-### Step 5: Bridge message to source editor selection
-
-**Prompt to agent:**
-
-```text
-Implement extension-host message handling in src/selectionBridge.ts.
-Requirements:
-- Receive askAboutSelection messages from webview.
-- Open source markdown document in editor.
-- Convert line info into vscode.Range via sourceMapper.
-- Programmatically select that source range.
-
-Deliverables:
-- Message handler wiring from preview provider.
-- sourceMapper implementation for robust line-to-range conversion.
-
-Acceptance:
-- After selecting text in preview and clicking Ask, the source editor highlights mapped lines.
-```
-
-### Step 6: Add AI command invocation with fallback behavior
-
-**Prompt to agent:**
-
-```text
-Implement AI invocation after source selection.
-Requirements:
-- Attempt configured command IDs via vscode.commands.executeCommand.
-- If command fails, fallback to:
-  1) keep source selection,
-  2) copy selected text to clipboard,
-  3) show actionable instruction message.
-- Make command IDs configurable in extension settings.
-
-Deliverables:
-- Invocation service/helper.
-- Settings schema in package.json.
-- Clear user notifications for fallback path.
-
-Acceptance:
-- Successful path triggers configured command.
-- Failure path degrades gracefully without crashes.
-```
-
-### Step 7: UX polish and optional sync features
-
-**Prompt to agent:**
-
-```text
-Polish UX for ask-markdown extension.
-Requirements:
-- Improve floating button positioning and dismissal rules.
-- Add optional preview->source reveal on block click.
-- Add status bar item when preview bridge is active.
-- Ensure keyboard accessibility and theme compatibility.
-
-Deliverables:
-- Updated preview JS/CSS and extension status-bar wiring.
-- Settings toggles for optional behaviors.
-
-Acceptance:
-- Interaction feels stable in light/dark themes.
-- No broken focus traps; keyboard navigation works.
-```
-
-### Step 8: Testing and validation suite
-
-**Prompt to agent:**
-
-```text
-Add tests for ask-markdown core behavior.
-Requirements:
-- Unit tests for source mapper and metadata injection.
-- Integration test for selection flow (preview event -> editor range selection).
-- Document manual QA checklist in README.
-
-Deliverables:
-- Test files and scripts.
-- README section for manual test scenarios and expected results.
-
-Acceptance:
-- Tests pass locally.
-- Manual QA checklist covers markdown edge cases.
-```
-
-### Step 9: Package and release readiness
-
-**Prompt to agent:**
-
-```text
-Prepare ask-markdown for packaging and release.
-Requirements:
-- Ensure production build output is clean.
-- Add README usage docs with screenshots placeholders.
-- Add CHANGELOG and LICENSE.
-- Configure .vscodeignore for lean package.
-
-Deliverables:
-- Release-ready repository state.
-- Verified .vsix generation command documented.
-
-Acceptance:
-- Extension packages successfully.
-- Docs explain install, usage, settings, and known limitations.
-```
-
-### Step 10: Hardening pass for Cursor compatibility
-
-**Prompt to agent:**
-
-```text
-Run a hardening pass focused on Cursor compatibility.
-Requirements:
-- Enumerate available command IDs and log capability detection at activation.
-- Ensure extension still works when direct AI command hook is unavailable.
-- Add troubleshooting section for command ID changes between Cursor versions.
-
-Deliverables:
-- Capability detection utility.
-- Improved fallback messaging.
-- Troubleshooting docs in README.
-
-Acceptance:
-- Core flow (selection -> source highlight) works regardless of AI command availability.
-- Users get clear guidance when integration command cannot be executed.
-```
