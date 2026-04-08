@@ -60,28 +60,6 @@ Each should print a version. If any fails, install it before continuing.
 
 ---
 
-## Phase 0 — Open the project correctly
-
-**Why this phase exists:** the #1 source of "nothing works" pain is opening the **wrong folder** in the editor. F5 debugging only works when the editor's open folder is the one containing `package.json`.
-
-### Steps
-
-1. Launch VS Code or Cursor.
-2. **File → Open Folder** → select the **inner** `ask-markdown/` folder (the one with `package.json`), **not** the repository root.
-3. Open the integrated terminal (`` Ctrl+` `` / `` Cmd+` ``).
-
-### Verify
-
-In the terminal, run:
-
-```bash
-ls package.json src dist .vscode
-```
-
-All four must exist. If `ls` complains, you opened the wrong folder — go back to step 2.
-
----
-
 ## Phase 1 — Bootstrap the extension package
 
 **Goal:** A project that compiles and produces `dist/extension.js`.
@@ -141,7 +119,7 @@ If the file exists, the build succeeded. If `npm run compile` printed errors, fi
 
 ### Steps
 
-1. Make sure the **inner `ask-markdown/` folder** is the open folder in your editor (Phase 0).
+1. Make sure the **inner `ask-markdown/` folder** is the open folder in your editor.
 2. Press **F5** (or **Run → Start Debugging**).
 3. A **second window** opens. Its title bar contains `[Extension Development Host]`. **All testing happens in this second window.**
 4. In the second window: **File → Open File** → open any `.md` file (or create a new one and save it as `test.md`). This is required because the extension activates on `onLanguage:markdown`.
@@ -162,7 +140,7 @@ Work through this checklist in order — stop at the first item that fixes it:
 
 | Symptom | Check |
 |---------|-------|
-| F5 does nothing / no second window | The folder you opened is wrong. It must contain `package.json` directly. Re-do Phase 0. |
+| F5 does nothing / no second window | The folder you opened is wrong. It must contain `package.json` directly. Re-open the inner `ask-markdown/` folder. |
 | Second window opens but commands not in palette | Open a `.md` file first (activation event). Then check `Developer: Show Running Extensions`. |
 | `ask-markdown` not in running extensions | Open the **Output** panel (`Ctrl+Shift+U`) → dropdown → **Extension Host**. Look for errors mentioning `ask-markdown` or `activate`. |
 | Build errors during F5 launch | F5 runs the `npm: compile` preLaunchTask. Check the **Terminal** panel of the *original* window for compile output. Run `npm run compile` manually to see the full error. |
