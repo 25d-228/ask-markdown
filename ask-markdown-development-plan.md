@@ -2,158 +2,131 @@
 
 ## Overview
 
-Build a VS Code / Cursor extension that lets users select rendered text in a markdown preview and ask Cursor AI about that selection. The extension bridges markdown preview webview selection and editor-selection-based AI workflows.
+Build a VS Code / Cursor extension: select text in a **markdown preview**, map it back to the **source file**, and **ask Cursor AI** about that selection.
 
-This document assumes you work from **WSL2 (Linux)** and use **Cursor or VS Code with the Remote - WSL** extension so the editor runs against your Linux filesystem and toolchain.
+Use **WSL2 (Linux)** and open the project with **Cursor or VS Code + Remote - WSL** so the editor uses your Linux files and tools.
+
+**Where to run `npm`:** In this repository, the extension lives in the inner **`ask-markdown/`** folder (the one with `package.json`). Open that folder in the editor and run all npm commands there.
 
 ---
 
-## Prerequisites (WSL): what to install
+## Prerequisites (WSL)
 
-Install these once in your WSL distro (Ubuntu is typical). Run updates first if the distro is new.
+Update packages if the distro is new:
 
 ```bash
 sudo apt update && sudo apt upgrade -y
 ```
 
-| Need | Purpose |
-|------|---------|
-| **Node.js LTS** (20.x or 22.x) | Extension build, `npm`, `npx` |
-| **Git** | Clone and version control |
-| **build-essential** | Optional; some native npm deps may need a compiler |
+| Install | Why |
+|---------|-----|
+| **Node.js LTS** (20.x or 22.x) | `npm`, `npx`, build |
+| **Git** | Version control |
+| **build-essential** | Only if some npm package needs a native compile |
 
-**Scaffolding the official VS Code extension template** (used in Phase 1) — run from your projects parent directory (e.g. `~/GitHub/SIDES`) without installing `yo` globally; `npx` pulls Yeoman and `generator-code` as needed:
+**Create a new extension from the official template** (skip if you already cloned this repo):
 
 ```bash
+cd ~/GitHub/SIDES    # parent folder you use for projects
 npx -p yo -p generator-code yo code
 ```
 
-**Packaging / publishing** (Phase 2 and Phase 8): add the CLI as a **devDependency** in the extension repo and invoke it with `npx` (no global `vsce`):
+Pick **New Extension (TypeScript)**, **esbuild**, **npm**, then open the generated folder.
+
+**Package extensions without a global tool:**
 
 ```bash
+cd ask-markdown        # folder that contains package.json
 npm install -D @vscode/vsce
-# then: npx vsce package   or   npx vsce publish
+npx vsce package       # or: npx vsce publish
 ```
 
-**Editor**: Install **Cursor** or **VS Code** on Windows, enable **Remote - WSL**, and open the repo folder from WSL (`File → Open Folder` → `\\wsl$\...` or use “Open in WSL” from a `\\wsl.localhost\...` path). Extension development and **F5 “Run Extension”** work from the WSL-connected window.
+**Editor:** Install **Cursor** or **VS Code** on Windows, turn on **Remote - WSL**, open the repo from WSL. Use **Run → Start Debugging** or **F5** to launch an **Extension Development Host** with your extension loaded.
 
 ---
 
-## Phase 1 — Bootstrap: scaffold and dependencies
+## Phase 1 — Bootstrap
 
-**Goal:** Create the extension project, install npm dependencies, and verify a compile.
+**What:** Have a project that compiles, and add the dependencies and file layout for the real feature.
 
-### Tasks
+**How:**
 
-1. **Initialize extension project**
-   - From WSL, `cd` to where you keep projects (e.g. `~/GitHub/SIDES`).
-   - Run `npx -p yo -p generator-code yo code` and choose **New Extension (TypeScript)**.
-   - Target `vscode` engine `^1.85.0` (or latest stable).
-   - Activation event: `onLanguage:markdown` (adjust in generated `package.json` if needed).
-
-```bash
-cd ~/GitHub/SIDES   # or your parent directory
-npx -p yo -p generator-code yo code
-# Follow prompts; then:
-cd ask-markdown     # or the folder name you chose
-npm install
-```
-
-2. **Create / align project structure** (evolve the scaffold toward this layout as you implement):
+1. **Scaffold** (if starting fresh): run `npx -p yo -p generator-code yo code` in a parent directory, then `cd` into the new folder and `npm install`.
+2. **Set `package.json`:** Use a recent `vscode` engine (e.g. `^1.85.0` or newer). Add **`onLanguage:markdown`** (or other activation you need) when you wire up preview and commands.
+3. **Grow the tree** toward something like:
 
    ```text
    ask-markdown/
    ├── src/
-   │   ├── extension.ts          # Entry point
-   │   ├── previewProvider.ts     # Webview panel provider
-   │   ├── selectionBridge.ts     # Webview -> editor mapping
-   │   ├── sourceMapper.ts        # Rendered selection -> source lines
-   │   └── commands.ts            # Command registration
+   │   ├── extension.ts
+   │   ├── previewProvider.ts
+   │   ├── selectionBridge.ts
+   │   ├── sourceMapper.ts
+   │   └── commands.ts
    ├── media/
-   │   ├── preview.js             # Webview client JS
-   │   └── preview.css            # Webview styles
+   │   ├── preview.js
+   │   └── preview.css
    ├── package.json
    ├── tsconfig.json
    ├── .vscodeignore
    └── README.md
    ```
 
-3. **Dependencies** (add with `npm install` as you adopt them)
-   - Runtime: `markdown-it`.
-   - Mapping: `markdown-it-source-map` (or custom plugin).
-   - Dev: `typescript`, `@types/vscode`, `esbuild`.
+4. **Install libraries** when you implement rendering and mapping:
 
-```bash
-npm install markdown-it markdown-it-source-map
-npm install -D esbuild
-# typescript and @types/vscode are usually already from yo code
-```
+   ```bash
+   npm install markdown-it markdown-it-source-map
+   ```
 
-4. **Contribute extension commands** in `package.json`
-   - `ask-markdown.openPreview`
-   - `ask-markdown.askAboutSelection`
-   - Optional keybinding: `Ctrl+Shift+M` to open custom preview.
+5. **Register commands** in `package.json`: e.g. `ask-markdown.openPreview`, `ask-markdown.askAboutSelection`. Optionally bind a key (e.g. **Ctrl+Shift+M**) to open the custom preview.
 
-**Verify:**
+**Check that it builds:**
 
 ```bash
 npm run compile
-# or: npm run build — use whatever script yo code generated
 ```
+
+Use `npm run build` or `npm run package` instead if that is what your `package.json` defines.
 
 ---
 
-## Phase 2 — Daily development: commands you run from WSL
+## Phase 2 — Daily workflow
 
-**Goal:** Repeatable edit → build → run loop.
+**What:** Edit code → build → run the extension in a test window.
 
-| Action | Command (from repo root in WSL) |
-|--------|----------------------------------|
-| One-off compile | `npm run compile` |
-| Watch mode (if configured) | `npm run watch` |
-| Run tests (when added) | `npm test` |
-| Lint (if added) | `npm run lint` |
+**How:**
 
-**Run the extension:** In Cursor/VS Code (WSL window), open the repo → **Run → Start Debugging** or press **F5**. A new **Extension Development Host** window opens with your extension loaded.
+| Step | Command |
+|------|---------|
+| Build | `npm run compile` |
+| Watch while coding | `npm run watch` (if present) |
+| Tests | `npm test` |
+| Lint | `npm run lint` (if present) |
 
-**Package a VSIX (when ready):**
+**Run the extension:** **F5** or **Run → Start Debugging** from the extension folder.
+
+**Make a `.vsix` to install locally:**
 
 ```bash
-npm install -D @vscode/vsce   # once per project
+npm install -D @vscode/vsce
 npm run compile
 npx vsce package
-# Produces e.g. ask-markdown-0.0.1.vsix
 ```
 
-Install locally: **Extensions** view → **…** → **Install from VSIX…** and pick the file.
+Install it: **Extensions** → **…** → **Install from VSIX…**.
 
 ---
 
-## Phase 3 — Implementation: custom markdown preview webview
+## Phase 3 — Custom markdown preview (webview)
 
-**Goal:** Render markdown with source-line annotations and capture selection.
+**What:** Show rendered markdown in a webview, tag blocks with source lines, capture selection.
 
-### Tasks
+**How:**
 
-1. **Build `previewProvider.ts`**
-   - Create and manage a webview panel.
-   - Render active markdown content with `markdown-it`.
-   - Listen for document changes and refresh preview.
-
-2. **Add source-line metadata**
-   - Inject `data-source-line` and `data-source-line-end` on block-level rendered elements.
-   - Use `token.map` from markdown-it tokens where available.
-
-3. **Implement `media/preview.css`**
-   - Theme-aware styles using VS Code CSS variables.
-   - Subtle hover and selection affordances.
-   - Floating Ask button styles.
-
-4. **Implement `media/preview.js`**
-   - Listen to selection events (`selectionchange`/`mouseup`).
-   - Collect selected text and nearest source-line attributes.
-   - Show floating action button.
-   - Post message to extension:
+1. Add **`previewProvider.ts`:** create/update a webview panel, render with `markdown-it`, refresh when the document changes.
+2. **Tag HTML:** set `data-source-line` / `data-source-line-end` on blocks using `token.map` from markdown-it where possible.
+3. Add **`media/preview.css`:** use VS Code theme variables; style selection and a floating Ask control.
+4. Add **`media/preview.js`:** on selection, read text + line info, then:
 
    ```js
    vscode.postMessage({
@@ -166,145 +139,78 @@ Install locally: **Extensions** view → **…** → **Install from VSIX…** an
 
 ---
 
-## Phase 4 — Implementation: selection bridge (webview → editor → AI)
+## Phase 4 — Bridge: webview → editor → AI
 
-**Goal:** Route rendered selection into Cursor AI via source selection.
+**What:** Turn webview selection into a source selection and trigger AI.
 
-### Tasks
+**How:**
 
-1. **Implement `selectionBridge.ts`**
-   - Handle webview messages (`askAboutSelection`).
-   - Open source markdown in editor (`showTextDocument`).
-   - Apply editor selection to mapped line range.
-
-2. **Implement `sourceMapper.ts`**
-   - Convert `{startLine, endLine}` into robust `vscode.Range`.
-   - Handle multi-block selections.
-   - Expand partial block selections to deterministic source ranges.
-
-3. **Trigger AI command**
-   - Attempt command invocation through `executeCommand` for Cursor chat/ask actions.
-   - Keep command IDs configurable to reduce breakage risk.
-
-4. **Fallback chain**
-   - If command invocation fails:
-     1. Keep source lines selected and show instruction toast.
-     2. Optionally copy selected text to clipboard.
-     3. Open chat panel as helper step.
+1. **`selectionBridge.ts`:** handle `askAboutSelection`, open the markdown file, set the editor selection to the mapped range.
+2. **`sourceMapper.ts`:** map `{ startLine, endLine }` to a solid `vscode.Range` (including multi-block and edge cases).
+3. **Call Cursor:** `vscode.commands.executeCommand(...)` with the chat/ask command you discover (make IDs configurable).
+4. **If that fails:** keep text selected, show a message, optionally copy to clipboard or open chat manually.
 
 ---
 
-## Phase 5 — Integration: Cursor command discovery
+## Phase 5 — Find stable Cursor commands
 
-**Goal:** Identify a stable strategy for sending selected context to AI.
+**What:** Know which command IDs work for “ask about selection” in Cursor.
 
-### Tasks
+**How:**
 
-1. **Enumerate available commands**
-   - Use `vscode.commands.getCommands(true)` and filter for relevant chat/ai/cursor terms.
-
-2. **Validate command behavior**
-   - Test commands with selected markdown ranges and argument payloads.
-   - Capture version-specific notes.
-
-3. **Design for resilience**
-   - Graceful fallback when commands are unavailable or changed.
-   - Add diagnostics logs for supportability.
-
-**Optional one-off in DevTools / temporary command:** log commands while exercising the UI; no separate WSL CLI is required beyond running the extension host.
+1. Call `vscode.commands.getCommands(true)` and search names for chat / AI / cursor.
+2. Try each candidate with a real selection; note what works in your Cursor version.
+3. Prefer settings for command IDs so you can change them without a new release.
 
 ---
 
-## Phase 6 — Polish: UX and settings
+## Phase 6 — Polish
 
-**Goal:** Make the feature feel native and ergonomic.
+**What:** Make the UX feel built-in.
 
-### Tasks
+**How:**
 
-1. **Floating action UX**
-   - Show actions on text selection: Ask Cursor, Copy, Find in Source.
-   - Dismiss on blur / empty selection.
-
-2. **Sync behavior**
-   - Optional scroll sync preview ↔ source editor.
-   - Click preview block to reveal source.
-
-3. **Theming and accessibility**
-   - Support light/dark/high-contrast themes.
-   - Ensure keyboard accessibility for action controls.
-
-4. **Status and settings**
-   - Status bar indicator when preview bridge is active.
-   - Settings:
-     - `ask-markdown.autoOpen`
-     - `ask-markdown.selectionMode`
-     - `ask-markdown.showFloatingButton`
+- Floating actions: Ask, Copy, Find in source; hide when selection clears.
+- Optional: scroll sync between preview and editor; click preview to jump in source.
+- Support light / dark / high contrast; keyboard access for actions.
+- Optional status bar + settings, e.g. `ask-markdown.autoOpen`, `ask-markdown.selectionMode`, `ask-markdown.showFloatingButton`.
 
 ---
 
-## Phase 7 — Quality: testing
+## Phase 7 — Testing
 
-### Tasks
+**What:** Catch mapping bugs before users do.
 
-1. **Unit tests**
-   - Source-line mapping behavior.
-   - Markdown-it data attribute injection.
+**How:**
+
+1. Unit tests for line mapping and markdown-it attributes.
+2. Integration: open MD, select in preview, assert editor range.
+3. Manual pass: headings, lists, quotes, code fences, tables, links, images, front matter, large files.
 
 ```bash
 npm test
 ```
 
-2. **Integration tests**
-   - Open markdown, render preview, simulate selection, verify editor range selection.
+---
 
-3. **Manual matrix**
-   - Headings, paragraphs, lists, blockquotes.
-   - Fenced code blocks.
-   - Tables, images, links.
-   - YAML frontmatter.
-   - Large markdown files (1000+ lines).
+## Phase 8 — Ship
+
+**What:** Build a release artifact and publish if you want.
+
+**How:**
+
+1. Run your production build (`npm run package` or `npm run compile` depending on scripts).
+2. `npx vsce package` → install or share the `.vsix`.
+3. Document usage, limits, and fallbacks (README + screenshots or GIF).
+4. To publish: `vsce login` / PAT, then `npx vsce publish`. Add issue templates for regressions.
 
 ---
 
-## Phase 8 — Ship: packaging and release
+## Risks
 
-### Tasks
-
-1. **Build and package**
-   - Bundle extension with `esbuild` (if that is your pipeline).
-   - Produce `.vsix` via `npx vsce package` (with `@vscode/vsce` installed locally in the project).
-
-```bash
-npm install -D @vscode/vsce   # if not already added
-npm run compile
-npx vsce package
-```
-
-2. **Documentation**
-   - Usage flow screenshots/GIF.
-   - Known limitations and fallback behavior.
-
-3. **Publish**
-   - Publish to VS Code marketplace for Cursor compatibility.
-   - Add issue templates for integration regressions.
-
-```bash
-# After vsce login / PAT setup (see VS Code publishing docs)
-npx vsce publish
-```
-
----
-
-## Key Risks and Mitigations
-
-1. **Cursor command API instability**
-   - Mitigation: configurable command IDs + fallback chain.
-
-2. **Selection mapping edge cases**
-   - Mitigation: block-level expansion + deterministic line-range rules.
-
-3. **Webview CSP and security constraints**
-   - Mitigation: strict nonce usage, sanitize rendered HTML, avoid inline scripts.
-
-4. **User confusion with dual previews**
-   - Mitigation: clear command naming, optional auto-open, concise onboarding in README.
+| Risk | What to do |
+|------|------------|
+| Cursor changes command IDs | Configurable IDs + fallbacks |
+| Tricky selections | Clear rules for block ranges and expansion |
+| Webview security | Nonces, sanitize HTML, avoid unsafe inline scripts |
+| Two previews (built-in vs yours) | Clear command names and README |
