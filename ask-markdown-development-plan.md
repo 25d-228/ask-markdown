@@ -22,41 +22,17 @@ sudo apt update && sudo apt upgrade -y
 | **Git** | Clone and version control |
 | **build-essential** | Optional; some native npm deps may need a compiler |
 
-**Node.js (recommended: nvm)** — keeps Node versions isolated and matches many extension docs.
+**Scaffolding the official VS Code extension template** (used in Phase 1) — run from your projects parent directory (e.g. `~/GitHub/SIDES`) without installing `yo` globally; `npx` pulls Yeoman and `generator-code` as needed:
 
 ```bash
-# Install nvm (official installer; check https://github.com/nvm-sh/nvm for latest)
-curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.1/install.sh | bash
-# Reload shell or: source ~/.bashrc
-command -v nvm || export NVM_DIR="$HOME/.nvm" && [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
-
-nvm install --lts
-nvm use --lts
-node -v
-npm -v
+npx -p yo -p generator-code yo code
 ```
 
-**Alternative: Node from your distro** (simpler, one version system-wide):
+**Packaging / publishing** (Phase 2 and Phase 8): add the CLI as a **devDependency** in the extension repo and invoke it with `npx` (no global `vsce`):
 
 ```bash
-sudo apt install -y git build-essential
-# Example: Node 20 from NodeSource (verify current instructions at https://github.com/nodesource/distributions)
-curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
-sudo apt install -y nodejs
-node -v
-npm -v
-```
-
-**Scaffolding the official VS Code extension template** (used in Phase 1):
-
-```bash
-npm install -g yo generator-code
-```
-
-**Packaging / publishing** (later, Phase 8):
-
-```bash
-npm install -g @vscode/vsce
+npm install -D @vscode/vsce
+# then: npx vsce package   or   npx vsce publish
 ```
 
 **Editor**: Install **Cursor** or **VS Code** on Windows, enable **Remote - WSL**, and open the repo folder from WSL (`File → Open Folder` → `\\wsl$\...` or use “Open in WSL” from a `\\wsl.localhost\...` path). Extension development and **F5 “Run Extension”** work from the WSL-connected window.
@@ -71,13 +47,13 @@ npm install -g @vscode/vsce
 
 1. **Initialize extension project**
    - From WSL, `cd` to where you keep projects (e.g. `~/GitHub/SIDES`).
-   - Run `yo code` and choose **New Extension (TypeScript)**.
+   - Run `npx -p yo -p generator-code yo code` and choose **New Extension (TypeScript)**.
    - Target `vscode` engine `^1.85.0` (or latest stable).
    - Activation event: `onLanguage:markdown` (adjust in generated `package.json` if needed).
 
 ```bash
 cd ~/GitHub/SIDES   # or your parent directory
-yo code
+npx -p yo -p generator-code yo code
 # Follow prompts; then:
 cd ask-markdown     # or the folder name you chose
 npm install
@@ -143,8 +119,9 @@ npm run compile
 **Package a VSIX (when ready):**
 
 ```bash
+npm install -D @vscode/vsce   # once per project
 npm run compile
-vsce package
+npx vsce package
 # Produces e.g. ask-markdown-0.0.1.vsix
 ```
 
@@ -295,11 +272,12 @@ npm test
 
 1. **Build and package**
    - Bundle extension with `esbuild` (if that is your pipeline).
-   - Produce `.vsix` via `vsce package`.
+   - Produce `.vsix` via `npx vsce package` (with `@vscode/vsce` installed locally in the project).
 
 ```bash
+npm install -D @vscode/vsce   # if not already added
 npm run compile
-vsce package
+npx vsce package
 ```
 
 2. **Documentation**
@@ -312,7 +290,7 @@ vsce package
 
 ```bash
 # After vsce login / PAT setup (see VS Code publishing docs)
-vsce publish
+npx vsce publish
 ```
 
 ---
