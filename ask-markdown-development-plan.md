@@ -1,216 +1,409 @@
 # ask-markdown Development Plan
 
-## Overview
+## What this project is
 
-Build a VS Code / Cursor extension: select text in a **markdown preview**, map it back to the **source file**, and **ask Cursor AI** about that selection.
+**ask-markdown** is a VS Code / Cursor extension that:
 
-Use **WSL2 (Linux)** and open the project with **Cursor or VS Code + Remote - WSL** so the editor uses your Linux files and tools.
+1. Renders a markdown file in a **custom webview preview**.
+2. Lets the user **select text inside that preview**.
+3. Maps the selection **back to the exact line range in the markdown source file**.
+4. Hands that selection off to **Cursor AI's chat / ask command** so the user can ask questions about it.
 
-**Where to run `npm`:** In this repository, the extension lives in the inner **`ask-markdown/`** folder (the one with `package.json`). Open that folder in the editor and run all npm commands there.
+The hard part is the **mapping** (preview DOM → source line range) and the **bridging** (webview → extension host → editor selection → AI command).
+
+## Repository layout
+
+Right now the repository contains only this plan:
+
+```text
+<repo-root>/
+└── ask-markdown-development-plan.md   ← this file
+```
+
+After Phase 1 scaffolds the extension, the layout will look like:
+
+```text
+<repo-root>/
+├── ask-markdown-development-plan.md
+└── ask-markdown/                       ← the extension package (npm root, created in Phase 1)
+    ├── package.json
+    ├── tsconfig.json
+    ├── esbuild.js
+    ├── .vscode/
+    │   ├── launch.json                 ← F5 debug config
+    │   └── tasks.json
+    ├── src/
+    │   └── extension.ts
+    └── dist/                           ← build output
+```
+
+> **Once it exists, all `npm` / `npx` commands in this plan are run from the inner `ask-markdown/` folder** (the one containing `package.json`). Whenever a command block appears, assume your shell's working directory is that folder.
+
+## Prerequisites (any platform)
+
+| Tool | Version | Purpose |
+|------|---------|---------|
+| Node.js | LTS (20.x or 22.x) | runs `npm`, build scripts |
+| npm | bundled with Node | package management |
+| Git | any recent | version control |
+| VS Code **or** Cursor | recent | editor + extension host |
+
+**Verify** (run anywhere):
+
+```bash
+node --version
+npm --version
+git --version
+```
+
+Each should print a version. If any fails, install it before continuing.
 
 ---
 
-## Prerequisites (WSL)
+## Phase 0 — Open the project correctly
 
-Update packages if the distro is new:
+**Why this phase exists:** the #1 source of "nothing works" pain is opening the **wrong folder** in the editor. F5 debugging only works when the editor's open folder is the one containing `package.json`.
 
-```bash
-sudo apt update && sudo apt upgrade -y
-```
+### Steps
 
-| Install | Why |
-|---------|-----|
-| **Node.js LTS** (20.x or 22.x) | `npm`, `npx`, build |
-| **Git** | Version control |
-| **build-essential** | Only if some npm package needs a native compile |
+1. Launch VS Code or Cursor.
+2. **File → Open Folder** → select the **inner** `ask-markdown/` folder (the one with `package.json`), **not** the repository root.
+3. Open the integrated terminal (`` Ctrl+` `` / `` Cmd+` ``).
 
-**Create a new extension from the official template** (skip if you already cloned this repo):
+### Verify
+
+In the terminal, run:
 
 ```bash
-cd ~/GitHub/SIDES    # parent folder you use for projects
-npx -p yo -p generator-code yo code
+ls package.json src dist .vscode
 ```
 
-Pick **New Extension (TypeScript)**, **esbuild**, **npm**, then open the generated folder.
-
-**Package extensions without a global tool:**
-
-```bash
-cd ask-markdown        # folder that contains package.json
-npm install -D @vscode/vsce
-npx vsce package       # or: npx vsce publish
-```
-
-**Editor:** Install **Cursor** or **VS Code** on Windows, turn on **Remote - WSL**, open the repo from WSL. Use **Run → Start Debugging** or **F5** to launch an **Extension Development Host** with your extension loaded.
+All four must exist. If `ls` complains, you opened the wrong folder — go back to step 2.
 
 ---
 
-## Phase 1 — Bootstrap
+## Phase 1 — Bootstrap the extension package
 
-**What:** Have a project that compiles, and add the dependencies and file layout for the real feature.
+**Goal:** A project that compiles and produces `dist/extension.js`.
 
-**How:**
+> **Skip this phase** if `package.json` and `src/extension.ts` already exist in the inner folder. You only need it for a fresh scaffold.
 
-1. **Scaffold** (if starting fresh): run `npx -p yo -p generator-code yo code` in a parent directory, then `cd` into the new folder and `npm install`.
-2. **Set `package.json`:** Use a recent `vscode` engine (e.g. `^1.85.0` or newer). Add **`onLanguage:markdown`** (or other activation you need) when you wire up preview and commands.
-3. **Grow the tree** toward something like:
+### Steps
 
-   ```text
-   ask-markdown/
-   ├── src/
-   │   ├── extension.ts
-   │   ├── previewProvider.ts
-   │   ├── selectionBridge.ts
-   │   ├── sourceMapper.ts
-   │   └── commands.ts
-   ├── media/
-   │   ├── preview.js
-   │   └── preview.css
-   ├── package.json
-   ├── tsconfig.json
-   ├── .vscodeignore
-   └── README.md
+1. From the directory **where you want the new extension folder to appear**, scaffold via the official Yeoman generator:
+
+   ```bash
+   npx -p yo -p generator-code yo code
    ```
 
-4. **Install libraries** when you implement rendering and mapping:
+   Choose **New Extension (TypeScript)** → **esbuild** → **npm**. Name the folder `ask-markdown`.
+
+2. Enter the new folder and install dependencies:
+
+   ```bash
+   cd ask-markdown
+   npm install
+   ```
+
+3. Install the markdown rendering libraries used by later phases:
 
    ```bash
    npm install markdown-it markdown-it-source-map
+   npm install -D @types/markdown-it
    ```
 
-5. **Register commands** in `package.json`: e.g. `ask-markdown.openPreview`, `ask-markdown.askAboutSelection`. Optionally bind a key (e.g. **Ctrl+Shift+M**) to open the custom preview.
+4. Edit `package.json`:
+   - `"engines": { "vscode": "^1.85.0" }` (or newer)
+   - `"activationEvents": ["onLanguage:markdown"]` — **do not** add `onCommand:` entries; VS Code generates them automatically from `contributes.commands`.
+   - Under `"contributes": { "commands": [...] }` declare:
+     - `ask-markdown.openPreview` — title `Ask Markdown: Open Preview`
+     - `ask-markdown.askAboutSelection` — title `Ask Markdown: Ask About Selection`
 
-**Check that it builds:**
+5. Build:
+
+   ```bash
+   npm run compile
+   ```
+
+### Verify
 
 ```bash
-npm run compile
+ls dist/extension.js
 ```
 
-Use `npm run build` or `npm run package` instead if that is what your `package.json` defines.
+If the file exists, the build succeeded. If `npm run compile` printed errors, fix them before moving on.
 
 ---
 
-## Phase 2 — Daily workflow
+## Phase 2 — Run the extension in a Development Host
 
-**What:** Edit code → build → run the extension in a test window.
+**Goal:** Confirm the extension actually loads and its commands are reachable from the Command Palette. This is the foundation you will rely on for every later phase.
 
-**How:**
+### Steps
 
-| Step | Command |
-|------|---------|
-| Build | `npm run compile` |
-| Watch while coding | `npm run watch` (if present) |
-| Tests | `npm test` |
-| Lint | `npm run lint` (if present) |
+1. Make sure the **inner `ask-markdown/` folder** is the open folder in your editor (Phase 0).
+2. Press **F5** (or **Run → Start Debugging**).
+3. A **second window** opens. Its title bar contains `[Extension Development Host]`. **All testing happens in this second window.**
+4. In the second window: **File → Open File** → open any `.md` file (or create a new one and save it as `test.md`). This is required because the extension activates on `onLanguage:markdown`.
 
-**Run the extension:** **F5** or **Run → Start Debugging** from the extension folder.
+### Verify (do all three)
 
-**Make a `.vsix` to install locally:**
+In the **Extension Development Host** window:
 
-```bash
-npm install -D @vscode/vsce
-npm run compile
-npx vsce package
-```
+1. **Command Palette** (`Ctrl+Shift+P` / `Cmd+Shift+P`) → type `Ask Markdown` → both commands should appear:
+   - `Ask Markdown: Open Preview`
+   - `Ask Markdown: Ask About Selection`
+2. Run **`Ask Markdown: Open Preview`**. The current stub shows an information popup in the bottom-right corner. Seeing the popup = activation works.
+3. **Command Palette → `Developer: Show Running Extensions`** → `ask-markdown` (or `undefined_publisher.ask-markdown`) is in the list.
 
-Install it: **Extensions** → **…** → **Install from VSIX…**.
+### If verification fails
+
+Work through this checklist in order — stop at the first item that fixes it:
+
+| Symptom | Check |
+|---------|-------|
+| F5 does nothing / no second window | The folder you opened is wrong. It must contain `package.json` directly. Re-do Phase 0. |
+| Second window opens but commands not in palette | Open a `.md` file first (activation event). Then check `Developer: Show Running Extensions`. |
+| `ask-markdown` not in running extensions | Open the **Output** panel (`Ctrl+Shift+U`) → dropdown → **Extension Host**. Look for errors mentioning `ask-markdown` or `activate`. |
+| Build errors during F5 launch | F5 runs the `npm: compile` preLaunchTask. Check the **Terminal** panel of the *original* window for compile output. Run `npm run compile` manually to see the full error. |
+| Stale build | Delete `dist/` and run `npm run compile` again. |
+
+### Daily workflow from here on
+
+| Action | How |
+|--------|-----|
+| Edit code | edit files under `src/` |
+| Rebuild | `npm run compile` (or run `npm run watch` in a terminal for auto-rebuild) |
+| Reload extension after edits | In the dev host window: **Ctrl+R** / **Cmd+R** (reloads the window with the new build) |
+| Stop debugging | Close the dev host window, or press the red stop button in the original window |
+| Run tests | `npm test` |
+| Lint | `npm run lint` |
 
 ---
 
 ## Phase 3 — Custom markdown preview (webview)
 
-**What:** Show rendered markdown in a webview, tag blocks with source lines, capture selection.
+**Goal:** A webview panel renders markdown and tags every block with its source line numbers.
 
-**How:**
+### File layout to create
 
-1. Add **`previewProvider.ts`:** create/update a webview panel, render with `markdown-it`, refresh when the document changes.
-2. **Tag HTML:** set `data-source-line` / `data-source-line-end` on blocks using `token.map` from markdown-it where possible.
-3. Add **`media/preview.css`:** use VS Code theme variables; style selection and a floating Ask control.
-4. Add **`media/preview.js`:** on selection, read text + line info, then:
+```text
+ask-markdown/
+├── src/
+│   ├── extension.ts          ← register commands, wire to previewProvider
+│   ├── previewProvider.ts    ← owns the WebviewPanel + rendering
+│   ├── selectionBridge.ts    ← (Phase 4) handles messages from webview
+│   ├── sourceMapper.ts       ← (Phase 4) line range → vscode.Range
+│   └── commands.ts           ← command registration helpers
+└── media/
+    ├── preview.css           ← uses var(--vscode-*) theme variables
+    └── preview.js            ← runs inside the webview, posts messages
+```
 
-   ```js
-   vscode.postMessage({
-     type: "askAboutSelection",
-     text: selectedText,
-     startLine,
-     endLine
-   });
+### Steps
+
+1. **`previewProvider.ts`:**
+   - Configure `markdown-it` so block tokens carry `token.map` (line range).
+   - Add a render rule that emits `data-source-line="<start>"` and `data-source-line-end="<end>"` on each block element.
+   - Create a `WebviewPanel` with:
+     - `viewColumn: vscode.ViewColumn.Beside`
+     - `enableScripts: true`
+     - `localResourceRoots: [vscode.Uri.joinPath(context.extensionUri, 'media')]`
+   - Build the HTML string with a CSP nonce, and inject `preview.css` + `preview.js` via `webview.asWebviewUri(...)`.
+   - Subscribe to `vscode.workspace.onDidChangeTextDocument` and re-render when the active markdown file changes.
+
+2. **`media/preview.js`:**
+   - Call `acquireVsCodeApi()` once.
+   - On `mouseup` / `selectionchange`, read `window.getSelection()`, walk up to the nearest element with `data-source-line`, then post:
+     ```js
+     vscode.postMessage({
+       type: "askAboutSelection",
+       text: selectedText,
+       startLine: Number(el.dataset.sourceLine),
+       endLine: Number(el.dataset.sourceLineEnd ?? el.dataset.sourceLine)
+     });
+     ```
+
+3. **`media/preview.css`:** style with `var(--vscode-editor-background)`, `var(--vscode-editor-foreground)`, etc., so it tracks light / dark / high-contrast themes automatically.
+
+4. **`extension.ts`:** make `ask-markdown.openPreview` call into `previewProvider`. Remove the stub popup.
+
+5. Rebuild and reload the dev host (`npm run compile`, then `Ctrl+R` in the dev host window).
+
+### Verify
+
+In the dev host window:
+
+1. Open a markdown file with a few headings, paragraphs, and a list.
+2. Run **`Ask Markdown: Open Preview`** → a webview opens beside the editor showing the rendered markdown.
+3. **Right-click inside the webview → Inspect** (if Developer Tools are available) and confirm block elements have `data-source-line` attributes. Alternatively, temporarily add a visible debug line in `preview.js` that logs the dataset on selection.
+4. Edit the markdown file in the editor → the preview updates within ~1s.
+5. Select text in the preview → in `extension.ts`, log the message you receive from the webview to the **Debug Console** of the original window. Confirm `startLine` / `endLine` look correct.
+
+---
+
+## Phase 4 — Bridge: webview selection → editor selection → AI
+
+**Goal:** A selection in the preview becomes a real selection in the source markdown editor, then triggers Cursor AI.
+
+### Steps
+
+1. **`sourceMapper.ts`:** export a function `toRange(doc: vscode.TextDocument, startLine: number, endLine: number): vscode.Range`. Clamp to document bounds. Use line-end column for `endLine` so the full last line is included.
+
+2. **`selectionBridge.ts`:** export a handler for `askAboutSelection` messages that:
+   - Resolves the source `TextDocument` (the one currently being previewed).
+   - Calls `vscode.window.showTextDocument(doc, { viewColumn: ViewColumn.One, preserveFocus: false })`.
+   - Sets `editor.selection = new vscode.Selection(range.start, range.end)`.
+   - Calls `editor.revealRange(range)`.
+   - Triggers the AI command (see Phase 5) via `vscode.commands.executeCommand(<id>)`.
+
+3. Wire `previewProvider` to forward `webview.onDidReceiveMessage` to the bridge.
+
+### Verify
+
+1. Open a markdown file, open the preview, select a paragraph in the preview.
+2. Focus jumps to the editor and the corresponding lines are highlighted (selection visible).
+3. The Cursor chat / ask UI opens with the selection (assuming Phase 5 has found a working command ID — until then, just confirm the editor selection is correct and skip the AI step).
+
+### Manual test cases
+
+| Markdown construct | Expected mapping |
+|--------------------|------------------|
+| Single paragraph | exact line range of that paragraph |
+| Heading | the heading line |
+| List item | the list item lines |
+| Multi-paragraph selection | start of first → end of last |
+| Code fence | full fence including ``` lines |
+| Blockquote | full quote block |
+
+---
+
+## Phase 5 — Find a stable Cursor "ask about selection" command
+
+**Goal:** Know which `vscode.commands.executeCommand(...)` ID actually opens Cursor's AI chat with the current selection. Cursor's command IDs are not officially documented and can change.
+
+### Steps
+
+1. In `extension.ts`, temporarily add:
+
+   ```ts
+   const all = await vscode.commands.getCommands(true);
+   console.log(all.filter(c => /chat|ask|cursor|ai/i.test(c)));
    ```
 
----
+2. Reload the dev host. Read the list in the **Debug Console** of the original window.
+3. Pick promising candidates. With a real selection in a markdown file, run them via:
+   - Command Palette (most are listed there), or
+   - `Developer: Run Command` → paste the ID.
+4. Note which command IDs reliably "ask about the current selection" in your Cursor version.
+5. Make the chosen command ID **configurable** via `contributes.configuration` in `package.json` (e.g. `ask-markdown.askCommandId`) so future Cursor updates only need a settings change.
 
-## Phase 4 — Bridge: webview → editor → AI
+### Verify
 
-**What:** Turn webview selection into a source selection and trigger AI.
+Selecting text in the preview triggers the AI ask flow with that text included, with **no manual Command Palette step** required.
 
-**How:**
+### Fallbacks (if no stable command exists)
 
-1. **`selectionBridge.ts`:** handle `askAboutSelection`, open the markdown file, set the editor selection to the mapped range.
-2. **`sourceMapper.ts`:** map `{ startLine, endLine }` to a solid `vscode.Range` (including multi-block and edge cases).
-3. **Call Cursor:** `vscode.commands.executeCommand(...)` with the chat/ask command you discover (make IDs configurable).
-4. **If that fails:** keep text selected, show a message, optionally copy to clipboard or open chat manually.
-
----
-
-## Phase 5 — Find stable Cursor commands
-
-**What:** Know which command IDs work for “ask about selection” in Cursor.
-
-**How:**
-
-1. Call `vscode.commands.getCommands(true)` and search names for chat / AI / cursor.
-2. Try each candidate with a real selection; note what works in your Cursor version.
-3. Prefer settings for command IDs so you can change them without a new release.
+- Copy selection to clipboard via `vscode.env.clipboard.writeText(...)` and show an information message: "Selection copied. Open Cursor chat and paste."
+- Leave the editor selection in place so the user can invoke their normal chat shortcut.
 
 ---
 
 ## Phase 6 — Polish
 
-**What:** Make the UX feel built-in.
+**Goal:** Make it feel built-in.
 
-**How:**
+### Steps
 
-- Floating actions: Ask, Copy, Find in source; hide when selection clears.
-- Optional: scroll sync between preview and editor; click preview to jump in source.
-- Support light / dark / high contrast; keyboard access for actions.
-- Optional status bar + settings, e.g. `ask-markdown.autoOpen`, `ask-markdown.selectionMode`, `ask-markdown.showFloatingButton`.
+- Floating action bar in the preview: **Ask**, **Copy**, **Find in source**. Hide when selection clears.
+- Optional scroll sync: when the editor scrolls, scroll the preview to the matching block (use `data-source-line` attributes).
+- Click-to-jump: clicking a block in the preview moves the cursor in the source editor.
+- Theme support: confirm light, dark, and high-contrast all look correct.
+- Keyboard accessibility: every floating action also has a Command Palette command.
+- Settings:
+  - `ask-markdown.askCommandId` (string)
+  - `ask-markdown.autoOpen` (boolean) — auto-open preview on `.md`
+  - `ask-markdown.showFloatingButton` (boolean)
+
+### Verify
+
+Walk through the manual test cases from Phase 4 again, this time checking that polish features behave correctly under each theme.
 
 ---
 
 ## Phase 7 — Testing
 
-**What:** Catch mapping bugs before users do.
+**Goal:** Catch mapping bugs before users do.
 
-**How:**
+### Steps
 
-1. Unit tests for line mapping and markdown-it attributes.
-2. Integration: open MD, select in preview, assert editor range.
-3. Manual pass: headings, lists, quotes, code fences, tables, links, images, front matter, large files.
+1. Unit tests for `sourceMapper.toRange` covering: single line, multi-line, last line of file, empty selection.
+2. Unit tests for the markdown-it render rule: assert that a known input produces output containing `data-source-line="N"` on the right elements.
+3. Integration tests via `@vscode/test-electron`: open a markdown document, simulate a postMessage from a fake webview, assert the editor selection equals the expected range.
+
+### Run
 
 ```bash
 npm test
 ```
 
+### Verify
+
+All tests pass. Add at least one test that would have caught a real bug you hit during development.
+
 ---
 
 ## Phase 8 — Ship
 
-**What:** Build a release artifact and publish if you want.
+**Goal:** Build a `.vsix` and (optionally) publish.
 
-**How:**
+### Steps
 
-1. Run your production build (`npm run package` or `npm run compile` depending on scripts).
-2. `npx vsce package` → install or share the `.vsix`.
-3. Document usage, limits, and fallbacks (README + screenshots or GIF).
-4. To publish: `vsce login` / PAT, then `npx vsce publish`. Add issue templates for regressions.
+1. Production build:
+
+   ```bash
+   npm run package
+   ```
+
+   (Falls back to `npm run compile` if your scripts don't define `package`.)
+
+2. Make sure `@vscode/vsce` is a devDependency:
+
+   ```bash
+   npm install -D @vscode/vsce
+   ```
+
+3. Edit `README.md` so it no longer contains the Yeoman template text. `vsce` refuses to package otherwise.
+
+4. Build the `.vsix`:
+
+   ```bash
+   npx vsce package
+   ```
+
+5. (Optional) Publish to the marketplace:
+
+   ```bash
+   npx vsce login <publisher>
+   npx vsce publish
+   ```
+
+### Verify
+
+```bash
+ls *.vsix
+```
+
+A `.vsix` file exists. Install it in a clean editor window via **Extensions view → … menu → Install from VSIX…**, then run the commands in a real (non-dev-host) window. They should work identically to Phase 2.
 
 ---
 
-## Risks
+## Risks & mitigations
 
-| Risk | What to do |
+| Risk | Mitigation |
 |------|------------|
-| Cursor changes command IDs | Configurable IDs + fallbacks |
-| Tricky selections | Clear rules for block ranges and expansion |
-| Webview security | Nonces, sanitize HTML, avoid unsafe inline scripts |
-| Two previews (built-in vs yours) | Clear command names and README |
+| Cursor changes its ask/chat command IDs | Make IDs configurable in settings; ship with sensible defaults; document the override. |
+| Tricky selections (tables, nested lists) span multiple `token.map` ranges | Implement a deliberate expansion rule and add tests for each construct. |
+| Webview security | Use a CSP with a nonce; never inject user content as raw HTML; treat markdown as untrusted input. |
+| Conflict with VS Code's built-in markdown preview | Use distinct command titles (`Ask Markdown:` prefix); document the difference in README. |
+| Activation never fires | Only the events listed in `activationEvents` activate the extension. Always include `onLanguage:markdown`. |
