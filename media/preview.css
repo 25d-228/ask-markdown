@@ -119,3 +119,45 @@ img {
 	background: var(--vscode-editor-selectionBackground);
 	color: var(--vscode-editor-selectionForeground, inherit);
 }
+
+/* ── Floating action bar ── */
+
+#ask-bar {
+	display: none;
+	position: absolute;
+	z-index: 100;
+	background: var(--vscode-editorWidget-background, #252526);
+	border: 1px solid var(--vscode-editorWidget-border, var(--vscode-panel-border));
+	border-radius: 5px;
+	padding: 2px;
+	box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+	white-space: nowrap;
+}
+
+#ask-bar button {
+	background: transparent;
+	color: var(--vscode-editor-foreground);
+	border: none;
+	padding: 3px 8px;
+	margin: 0 1px;
+	font-size: 0.82em;
+	font-family: var(--vscode-font-family);
+	border-radius: 3px;
+	cursor: pointer;
+}
+
+#ask-bar button:hover {
+	background: var(--vscode-toolbar-hoverBackground, rgba(127, 127, 127, 0.2));
+}
+
+/* ── Clickable blocks ── */
+
+[data-source-line] {
+	cursor: default;
+}
+
+[data-source-line]:hover {
+	outline: 1px dashed var(--vscode-editor-selectionBackground, rgba(127, 127, 127, 0.25));
+	outline-offset: 2px;
+	border-radius: 2px;
+}

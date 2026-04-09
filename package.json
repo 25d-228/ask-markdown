@@ -23,7 +23,27 @@
         "command": "ask-markdown.askAboutSelection",
         "title": "Ask Markdown: Ask About Selection"
       }
-    ]
+    ],
+    "configuration": {
+      "title": "Ask Markdown",
+      "properties": {
+        "ask-markdown.askCommandId": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Command ID invoked after the editor selection is set (e.g. `aichat.newchataction`). Leave blank to skip the AI step — the selection will still be set in the editor."
+        },
+        "ask-markdown.autoOpen": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically open the Ask Markdown preview when a markdown file is opened."
+        },
+        "ask-markdown.showFloatingButton": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show the floating action bar (Ask / Copy / Find in source) when text is selected in the preview."
+        }
+      }
+    }
   },
   "scripts": {
     "vscode:prepublish": "npm run package",
@@ -53,7 +73,9 @@
     "typescript-eslint": "^8.56.1"
   },
   "dependencies": {
+    "katex": "^0.16.45",
     "markdown-it": "^14.1.1",
-    "markdown-it-source-map": "^0.1.1"
+    "markdown-it-source-map": "^0.1.1",
+    "markdown-it-texmath": "^1.0.0"
   }
 }

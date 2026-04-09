@@ -9,28 +9,29 @@ export interface AskAboutSelectionMessage {
 }
 
 /**
- * Receive an `askAboutSelection` message from the preview webview and
- * turn it into a real editor selection on the source markdown document.
+ * Handle an "Ask" action from the preview webview.
  *
- * Steps:
- * 1. Convert the 1-based inclusive line range from the webview into a
- *    zero-based `vscode.Range` (clamped to the document bounds).
- * 2. Show the source document in the editor column.
- * 3. Set its selection to the computed range and reveal it.
- * 4. (Phase 5) trigger the configured Cursor "ask" command. For now this
- *    is a no-op so the bridge can be verified independently.
+ * Since the source editor is visible beside the preview, we can set the
+ * selection directly on it — no tab switching, no flicker.
  */
 export async function handleAskAboutSelection(
 	doc: vscode.TextDocument,
 	message: AskAboutSelectionMessage,
 ): Promise<void> {
-	// markdown-it line numbers are 1-based; vscode.Position is 0-based.
 	const range = toRange(doc, message.startLine - 1, message.endLine - 1);
 
-	const editor = await vscode.window.showTextDocument(doc, {
-		viewColumn: vscode.ViewColumn.One,
-		preserveFocus: false,
-	});
+	// The source editor is already visible in column 1. Find it directly.
+	let editor = vscode.window.visibleTextEditors.find(
+		(e) => e.document.uri.toString() === doc.uri.toString(),
+	);
+
+	if (!editor) {
+		// Fallback: open it beside the preview if somehow not visible.
+		editor = await vscode.window.showTextDocument(doc, {
+			viewColumn: vscode.ViewColumn.One,
+			preserveFocus: true,
+		});
+	}
 
 	editor.selection = new vscode.Selection(range.start, range.end);
 	editor.revealRange(
@@ -38,6 +39,11 @@ export async function handleAskAboutSelection(
 		vscode.TextEditorRevealType.InCenterIfOutsideViewport,
 	);
 
-	// Phase 5 will read `ask-markdown.askCommandId` from settings and
-	// invoke it here via vscode.commands.executeCommand(...).
+	const commandId = vscode.workspace
+		.getConfiguration('ask-markdown')
+		.get<string>('askCommandId');
+
+	if (commandId) {
+		await vscode.commands.executeCommand(commandId);
+	}
 }

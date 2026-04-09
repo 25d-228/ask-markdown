@@ -28,7 +28,7 @@ After Phase 3 the repo also contains `src/previewProvider.ts`, `src/commands.ts`
 
 ---
 
-## Phase 1 — Bootstrap *(DONE)*
+## Phase 1 — Bootstrap
 
 **Goal:** A buildable extension package exists with all dependencies installed.
 
@@ -67,7 +67,7 @@ ls dist/extension.js
 
 ---
 
-## Phase 2 — First run in the Extension Development Host *(DONE)*
+## Phase 2 — First run in the Extension Development Host
 
 **Goal:** Pressing F5 opens a second VS Code window where both extension commands appear in the Command Palette.
 
