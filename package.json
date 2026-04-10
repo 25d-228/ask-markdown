@@ -2,12 +2,12 @@
   "name": "ask-markdown",
   "displayName": "ask-markdown",
   "description": "",
-  "version": "0.0.2",
+  "version": "0.1.0",
   "publisher": "vibe-dog",
   "license": "MIT",
   "icon": "media/icon.png",
   "engines": {
-    "vscode": "^1.115.0"
+    "vscode": "^1.85.0"
   },
   "categories": [
     "Other"
@@ -26,7 +26,7 @@
             "filenamePattern": "*.md"
           }
         ],
-        "priority": "default"
+        "priority": "option"
       }
     ],
     "commands": [
@@ -48,10 +48,10 @@
     "configuration": {
       "title": "Ask Markdown",
       "properties": {
-        "ask-markdown.autoOpen": {
+        "ask-markdown.defaultEditor": {
           "type": "boolean",
-          "default": true,
-          "description": "Automatically open the Ask Markdown preview when a markdown file is opened."
+          "default": false,
+          "description": "Use Ask Markdown as the default editor for .md files."
         },
         "ask-markdown.showFloatingButton": {
           "type": "boolean",
@@ -79,7 +79,7 @@
     "@types/markdown-it": "^14.1.2",
     "@types/mocha": "^10.0.10",
     "@types/node": "22.x",
-    "@types/vscode": "^1.115.0",
+    "@types/vscode": "^1.85.0",
     "@types/ws": "^8.18.1",
     "@vscode/test-cli": "^0.0.12",
     "@vscode/test-electron": "^2.5.2",

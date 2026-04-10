@@ -46,7 +46,7 @@ function writeLockFile(port: number, token: string): void {
 	const lockData: LockFile = {
 		pid: process.pid,
 		workspaceFolders: getWorkspaceFolders(),
-		ideName: 'AskMarkdown',
+		ideName: 'Ask Markdown',
 		transport: 'ws',
 		runningInWindows: process.platform === 'win32',
 		authToken: token,

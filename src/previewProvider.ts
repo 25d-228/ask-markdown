@@ -277,10 +277,12 @@ export class AskMarkdownEditorProvider implements vscode.CustomTextEditorProvide
 						lineStart: startLine,
 						lineEnd: endLine,
 					});
+					vscode.commands.executeCommand('workbench.action.terminal.focus');
 				} else if (message.type === 'askCodex') {
 					const startLine = Number(message.startLine);
 					const endLine = Number(message.endLine);
 					sendToCodex(document.uri.fsPath, startLine, endLine);
+					vscode.commands.executeCommand('workbench.action.terminal.focus');
 				} else if (message.type === 'syncSelection') {
 					const startLine = Math.max(
 						0,
