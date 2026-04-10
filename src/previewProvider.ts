@@ -2,11 +2,8 @@ import * as vscode from 'vscode';
 import MarkdownIt from 'markdown-it';
 const texmath = require('markdown-it-texmath');
 const katex = require('katex');
-import {
-	handleAskAboutSelection,
-	type AskAboutSelectionMessage,
-} from './selectionBridge';
 import { toRange } from './sourceMapper';
+import { broadcast, isConnected } from './claudeServer';
 
 type Token = Parameters<MarkdownIt['renderer']['render']>[0][number];
 
@@ -205,13 +202,8 @@ export function openPreview(
 	});
 
 	const messageSubscription = panel.webview.onDidReceiveMessage(
-		async (message: AskAboutSelectionMessage | { type: string; [key: string]: unknown }) => {
-			if (message.type === 'askAboutSelection') {
-				await handleAskAboutSelection(
-					document,
-					message as AskAboutSelectionMessage,
-				);
-			} else if (message.type === 'revealSource') {
+		async (message: { type: string; [key: string]: unknown }) => {
+			if (message.type === 'revealSource') {
 				const startLine = Math.max(0, Number(message.line) - 1);
 				const endLine = message.endLine
 					? Math.max(0, Number(message.endLine) - 1)
@@ -227,35 +219,19 @@ export function openPreview(
 					vscode.TextEditorRevealType.InCenterIfOutsideViewport,
 				);
 			} else if (message.type === 'askClaude') {
-				const startLine = Math.max(0, Number(message.startLine) - 1);
-				const endLine = Math.max(0, Number(message.endLine) - 1);
-				const range = toRange(document, startLine, endLine);
-				const editor = await vscode.window.showTextDocument(document, {
-					viewColumn: vscode.ViewColumn.One,
-					preserveFocus: false,
+				const startLine = Number(message.startLine);
+				const endLine = Number(message.endLine);
+				if (!isConnected()) {
+					vscode.window.showWarningMessage(
+						'Ask Markdown: No Claude CLI connected. Run "claude" in a terminal first.',
+					);
+					return;
+				}
+				broadcast('at_mentioned', {
+					filePath: document.uri.fsPath,
+					lineStart: startLine,
+					lineEnd: endLine,
 				});
-				editor.selection = new vscode.Selection(range.start, range.end);
-				editor.revealRange(
-					range,
-					vscode.TextEditorRevealType.InCenterIfOutsideViewport,
-				);
-				await vscode.commands.executeCommand('claude-vscode.sidebar.open');
-				await vscode.commands.executeCommand('claude-code.insertAtMentioned');
-			} else if (message.type === 'askCodex') {
-				const startLine = Math.max(0, Number(message.startLine) - 1);
-				const endLine = Math.max(0, Number(message.endLine) - 1);
-				const range = toRange(document, startLine, endLine);
-				const editor = await vscode.window.showTextDocument(document, {
-					viewColumn: vscode.ViewColumn.One,
-					preserveFocus: false,
-				});
-				editor.selection = new vscode.Selection(range.start, range.end);
-				editor.revealRange(
-					range,
-					vscode.TextEditorRevealType.InCenterIfOutsideViewport,
-				);
-				await vscode.commands.executeCommand('chatgpt.addToThread');
-				await vscode.commands.executeCommand('chatgpt.openSidebar');
 			} else if (message.type === 'syncSelection') {
 				const startLine = Math.max(0, Number(message.startLine) - 1);
 				const endLine = Math.max(0, Number(message.endLine) - 1);

@@ -56,9 +56,7 @@
 	const bar = document.createElement('div');
 	bar.id = 'ask-bar';
 	bar.innerHTML =
-		'<button data-action="cursor">Cursor</button>' +
 		'<button data-action="claude">Claude</button>' +
-		'<button data-action="codex">Codex</button>' +
 		'<button data-action="find">Find in source</button>';
 	document.body.appendChild(bar);
 
@@ -101,22 +99,9 @@
 			return;
 		}
 		const action = btn.dataset.action;
-		if (action === 'cursor') {
-			vscode.postMessage({
-				type: 'askAboutSelection',
-				text: currentRange.text,
-				startLine: currentRange.startLine,
-				endLine: currentRange.endLine,
-			});
-		} else if (action === 'claude') {
+		if (action === 'claude') {
 			vscode.postMessage({
 				type: 'askClaude',
-				startLine: currentRange.startLine,
-				endLine: currentRange.endLine,
-			});
-		} else if (action === 'codex') {
-			vscode.postMessage({
-				type: 'askCodex',
 				startLine: currentRange.startLine,
 				endLine: currentRange.endLine,
 			});

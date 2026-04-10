@@ -2,29 +2,36 @@
 
 ## What this project is
 
-**ask-markdown** is a VS Code / Cursor extension that renders a markdown file in a custom webview, lets the user select text inside that preview, maps the selection back to the exact line range in the source file, and hands it off to Cursor's AI chat command. The hard part is the **mapping** (preview DOM → source line range) and the **bridging** (webview → extension host → editor selection → AI command). The audience is anyone who reads long markdown documents in Cursor and wants to ask the AI questions about specific passages without manually copying text.
+**ask-markdown** is a VS Code / Cursor extension that renders a markdown file in a custom webview with LaTeX support, lets the user select text inside that preview, maps the selection back to the exact line range in the source file, and sends it to Claude Code via a WebSocket server that speaks the same MCP protocol as the official Claude Code IDE integration. The user reads a long markdown document, selects a passage in the rendered preview, clicks "Claude", and Claude CLI receives the file reference with line numbers — no manual copying, no source editor required. The audience is anyone who reads markdown documents in VS Code or Cursor and wants to ask Claude questions about specific passages.
 
 ## Repository layout
 
-The extension lives **at the repo root** — there is no inner `ask-markdown/` folder. All `npm` and `npx` commands run from the repo root.
-
-Current layout:
-
 ```text
-ask-markdown/                       ← repo root = npm root
-├── ask-markdown-development-plan.md
-├── package.json
-├── tsconfig.json
-├── esbuild.js
-├── eslint.config.mjs
-├── README.md
-├── CHANGELOG.md
-├── src/
-│   └── extension.ts
-└── dist/                           ← build output (generated)
+ask-markdown/                          <- repo root = npm root
++-- ask-markdown-development-plan.md
++-- package.json
++-- tsconfig.json
++-- esbuild.js
++-- eslint.config.mjs
++-- README.md
++-- CHANGELOG.md
++-- .vscode/
+|   +-- launch.json
++-- src/
+|   +-- extension.ts                   <- entry point, starts server + registers commands
+|   +-- previewProvider.ts             <- webview panel, markdown-it + KaTeX rendering
+|   +-- sourceMapper.ts                <- line-number-to-range helper
+|   +-- claudeServer.ts               <- WebSocket server, MCP protocol, lock file
+|   +-- test/
+|       +-- extension.test.ts          <- scaffold only
++-- media/
+|   +-- preview.css                    <- theme-aware preview styles
+|   +-- preview.js                     <- webview selection, floating bar, scroll sync
++-- dist/                              <- build output (generated)
++-- node_modules/
 ```
 
-After Phase 3 the repo also contains `src/previewProvider.ts`, `src/commands.ts`, and a `media/` folder. After Phase 4 it also contains `src/sourceMapper.ts` and `src/selectionBridge.ts`.
+All `npm` commands run from the repo root.
 
 ---
 
@@ -34,11 +41,11 @@ After Phase 3 the repo also contains `src/previewProvider.ts`, `src/commands.ts`
 
 **What gets built in this phase:**
 
-- [package.json](package.json) — Declares the extension, its two commands, and its dependencies.
+- [package.json](package.json) — Declares the extension, its command, settings, and dependencies.
 - [src/extension.ts](src/extension.ts) — The entry point VS Code loads when the extension activates.
 - `dist/extension.js` — The bundled output that VS Code actually runs.
 
-### 1.1 Re-verify from scratch (only if needed)
+### 1.1 Re-verify from scratch
 
 ```bash
 node --version
@@ -50,37 +57,37 @@ ls dist/extension.js
 
 **Result:** `dist/extension.js` exists and `npm run compile` exits with `0`.
 
-### Verify (end of phase)
+**Verify:** `dist/extension.js` exists and its mtime is recent.
 
-1. `node --version` prints a Node LTS version (20.x or 22.x).
-2. `npm install` exits cleanly.
-3. `npm run compile` exits with `0`.
-4. `dist/extension.js` exists.
+### Test method
 
-### If verification fails
+**What to test:** The project builds without errors.
 
-| Symptom                          | Check                                                       |
-|----------------------------------|-------------------------------------------------------------|
-| `npm install` fails              | Node version too old; upgrade to LTS.                       |
-| `npm run compile` errors         | Look for missing types in `src/extension.ts`.               |
-| `dist/extension.js` missing      | `esbuild.js` did not run; re-check the `compile` script.    |
+**How to test:**
+
+```bash
+npm run compile
+echo $?
+```
+
+**Expected result:** Exit code `0`, no TypeScript or lint errors.
 
 ---
 
 ## Phase 2 — First run in the Extension Development Host
 
-**Goal:** Pressing F5 opens a second VS Code window where both extension commands appear in the Command Palette.
+**Goal:** Pressing F5 opens a second VS Code window where the extension command appears in the Command Palette.
 
-**What gets built in this phase:** nothing new — this phase only proves Phase 1's package is loadable.
+**What gets built in this phase:** Nothing new. This phase proves Phase 1's package is loadable.
 
 ### 2.1 Launch the dev host
 
 1. Open the repo root in VS Code or Cursor.
 2. Press **F5**. A second window opens with `[Extension Development Host]` in its title bar.
 3. In that window, open any `.md` file.
-4. Command Palette (`Cmd+Shift+P`) → type `Ask Markdown`.
+4. Command Palette (`Cmd+Shift+P`) -> type `Ask Markdown`.
 
-**Result:** both `Ask Markdown` commands appear in the palette.
+**Result:** `Ask Markdown: Open Preview` appears in the palette.
 
 **Verify:**
 
@@ -88,524 +95,445 @@ ls dist/extension.js
 2. `Ask Markdown: Open Preview` appears in the palette.
 3. `Developer: Show Running Extensions` lists `ask-markdown`.
 
-### Verify (end of phase)
+### Test method
 
-1. The dev host launches without errors.
-2. The extension activates on a markdown file (visible in `Show Running Extensions`).
-3. Both commands are listed in the palette.
+**What to test:** The extension activates on a markdown file without errors.
 
-### If verification fails
+**How to test:** Press F5, open a `.md` file, check the command palette and running extensions list.
 
-| Symptom                            | Check                                                            |
-|------------------------------------|------------------------------------------------------------------|
-| F5 does nothing                    | `.vscode/launch.json` missing or broken.                         |
-| Commands not in palette            | `activationEvents` missing `onLanguage:markdown`.                |
-| "Cannot find module" on activate   | `main` field in `package.json` does not point at `dist/extension.js`. |
+**Expected result:** The extension appears in both the palette and the running extensions list.
 
 ---
 
-## Phase 3 — Custom markdown preview (webview)
+## Phase 3 — Markdown preview with source mapping
 
-**Goal:** Running `Ask Markdown: Open Preview` opens a webview beside the editor that renders the active markdown file, with every block element tagged so we know which source lines it came from.
+**Goal:** Running `Ask Markdown: Open Preview` opens a webview beside the editor that renders the active markdown file, with every block element tagged with its source line numbers.
 
 **What gets built in this phase:**
 
 - [src/previewProvider.ts](src/previewProvider.ts) — Owns the preview window.
+  - `createMarkdownIt` — Sets up the markdown renderer and stamps every block element with the line numbers it came from in the source.
   - `openPreview` — Opens a side panel and shows the rendered markdown for the current file.
-  - The render rule — Stamps every paragraph, heading, list item, code block and quote with the line numbers it came from in the source.
+  - `buildHtml` — Assembles the webview HTML with security headers, stylesheets, and scripts.
   - The change listener — Re-renders the preview whenever the source file changes.
-- [src/commands.ts](src/commands.ts) — Tiny glue file that wires the palette commands to the provider.
+- [src/sourceMapper.ts](src/sourceMapper.ts) — Turns a pair of line numbers into something the editor can highlight, and clips them so they never run off the end of the file.
+  - `toRange` — Converts zero-based start/end lines to a full editor range, clamped to the document bounds.
 - [media/preview.css](media/preview.css) — Makes the preview match the editor's light, dark, or high-contrast theme.
 - [media/preview.js](media/preview.js) — Watches for text selections in the preview and tells the extension host which lines were picked.
 
-### 3.1 Create the new files
+### 3.1 Create the source files
 
 ```bash
 mkdir -p media
-touch src/previewProvider.ts src/commands.ts media/preview.css media/preview.js
+touch src/previewProvider.ts src/sourceMapper.ts media/preview.css media/preview.js
 ```
 
-**Result:** four empty files exist.
+**Result:** Four empty files exist.
 
-**Verify:**
+**Verify:** `ls src/previewProvider.ts src/sourceMapper.ts media/preview.css media/preview.js` prints all paths.
 
-```bash
-ls src/previewProvider.ts src/commands.ts media/preview.css media/preview.js
-```
+### 3.2 Implement the source mapper
 
-All four paths print with no error.
+Edit [src/sourceMapper.ts](src/sourceMapper.ts). Export `toRange(doc, startLine, endLine)` which clamps both line numbers to `[0, doc.lineCount - 1]`, swaps if reversed, and uses the end-of-line column on `endLine` so the full last line is included.
 
-### 3.2 Implement the preview provider
+**Result:** A pure function with no UI dependencies — easy to unit-test later.
+
+**Verify:** `npm run compile` exits with `0`.
+
+### 3.3 Implement the preview provider
 
 Edit [src/previewProvider.ts](src/previewProvider.ts):
 
-- Configure `markdown-it` with `{ html: false, linkify: true }` and enable `token.map` on block tokens.
-- Add a render rule that wraps every block-level token's opening tag with `data-source-line="<map[0]+1>"` and `data-source-line-end="<map[1]>"`.
-- Export `openPreview(context, document)` which calls `vscode.window.createWebviewPanel('askMarkdownPreview', 'Ask Markdown Preview', vscode.ViewColumn.Beside, { enableScripts: true, localResourceRoots: [vscode.Uri.joinPath(context.extensionUri, 'media')] })`.
-- Build the HTML with a CSP `<meta>` tag carrying a per-load **nonce**, and inject `media/preview.css` and `media/preview.js` via `panel.webview.asWebviewUri(...)`.
-- Subscribe to `vscode.workspace.onDidChangeTextDocument`, re-render on change, and dispose the listener when the panel is disposed.
-- Store the source `document` on the panel so Phase 4 can reach it.
+- Configure `markdown-it` with `{ html: false, linkify: true }`.
+- Add render rules that wrap every block-level opening tag with `data-source-line` and `data-source-line-end` attributes derived from `token.map`.
+- Export `openPreview(context, document)` which creates a webview panel beside the editor.
+- Build the HTML with a CSP `<meta>` tag carrying a per-load nonce, and inject `media/preview.css` and `media/preview.js`.
+- Subscribe to `vscode.workspace.onDidChangeTextDocument` to re-render on change.
 
-```bash
-npm run compile
-```
+**Result:** Clean build with `npm run compile`.
 
-**Result:** clean build, `dist/extension.js` updated.
+**Verify:** `npm run compile` exits with `0`.
 
-**Verify:** `npm run compile` exits with `0` and reports no TypeScript errors.
+### 3.4 Implement preview.css
 
-### 3.3 Implement preview.css
+Edit [media/preview.css](media/preview.css). Use VS Code theme CSS variables (`--vscode-editor-background`, `--vscode-editor-foreground`, etc.) so the preview tracks the current theme.
 
-Edit [media/preview.css](media/preview.css) and use VS Code theme variables so the preview tracks the editor theme:
+**Result:** Preview inherits the editor theme.
 
-```css
-body {
-  background: var(--vscode-editor-background);
-  color: var(--vscode-editor-foreground);
-  font-family: var(--vscode-font-family);
-  padding: 1rem 2rem;
-}
-a { color: var(--vscode-textLink-foreground); }
-code, pre { font-family: var(--vscode-editor-font-family); }
-```
+**Verify:** Checked visually in 3.6.
 
-**Result:** preview will inherit the editor theme.
+### 3.5 Implement preview.js
 
-**Verify:** checked visually in 3.6.
+Edit [media/preview.js](media/preview.js). On `mouseup`, read the DOM selection, walk up to the nearest `[data-source-line]` element, and post a message to the extension host with the selected text and source line range.
 
-### 3.4 Implement preview.js
+**Result:** Any selection in the webview posts a message with the text and source line range.
 
-Edit [media/preview.js](media/preview.js):
+**Verify:** Checked in 3.6.
 
-```javascript
-const vscode = acquireVsCodeApi();
+### 3.6 Wire extension.ts to the preview provider and run end-to-end
 
-document.addEventListener('mouseup', () => {
-  const sel = window.getSelection();
-  if (!sel || sel.isCollapsed) return;
-  const text = sel.toString();
-  if (!text.trim()) return;
+In [src/extension.ts](src/extension.ts), import `openPreview` and wire it to the `ask-markdown.openPreview` command. Temporarily `console.log` incoming messages in the Debug Console.
 
-  let node = sel.anchorNode;
-  while (node && node.nodeType !== 1) node = node.parentNode;
-  let el = node;
-  while (el && !el.dataset?.sourceLine) el = el.parentElement;
-  if (!el) return;
+1. Press **F5** (or `Cmd+R` if the dev host is open).
+2. Open a `.md` file with a heading, paragraph, list, and fenced code block.
+3. Command Palette -> **`Ask Markdown: Open Preview`**.
 
-  vscode.postMessage({
-    type: 'askAboutSelection',
-    text,
-    startLine: Number(el.dataset.sourceLine),
-    endLine: Number(el.dataset.sourceLineEnd ?? el.dataset.sourceLine),
-  });
-});
-```
-
-**Result:** any selection in the webview posts a message with the text and source line range.
-
-**Verify:** checked in 3.6.
-
-### 3.5 Wire extension.ts to the new provider
-
-Edit [src/extension.ts](src/extension.ts):
-
-- Import `openPreview` from `./previewProvider`.
-- Replace the stub `ask-markdown.openPreview` handler so it calls `openPreview(context, vscode.window.activeTextEditor.document)` for markdown files, otherwise shows a warning message.
-- Register `panel.webview.onDidReceiveMessage` and **temporarily** `console.log('[ask-markdown]', message)` so 3.6 can verify the bridge.
-- Remove any old "Hello World" popup.
-
-```bash
-npm run compile
-```
-
-**Result:** clean build.
+**Result:** Preview opens beside the editor, theme-matched, and selection messages appear in the Debug Console.
 
 **Verify:**
 
-```bash
-ls dist/extension.js
-```
-
-File exists and its mtime is recent.
-
-### 3.6 Run end-to-end
-
-1. Press **F5** in the main window (or `Cmd+R` in the dev host if it is open).
-2. In the dev host, open a `.md` file with at least: a heading, a paragraph, a list, and a fenced code block.
-3. Command Palette → **`Ask Markdown: Open Preview`**.
-
-**Result:** preview opens beside the editor, theme-matched, and selection messages reach the host.
-
-### Verify (end of phase)
-
-1. A panel titled **Ask Markdown Preview** opens beside the editor with theme-matched colors.
-2. Right-click → **Inspect** in the webview shows block elements (`<p>`, `<h1>`, `<ul>`) carrying `data-source-line` attributes.
+1. A panel titled **Ask Markdown Preview** opens beside the editor.
+2. Right-click -> **Inspect** in the webview shows block elements carrying `data-source-line` attributes.
 3. Editing the source `.md` re-renders the preview within ~1 second.
-4. Selecting a paragraph in the preview prints an `[ask-markdown]` log line in the **Debug Console** of the original window with `startLine` / `endLine` matching the editor gutter.
+4. Selecting a paragraph in the preview prints an `[ask-markdown]` log line in the Debug Console with `startLine` / `endLine` matching the editor gutter.
 
-### If verification fails
+### Test method
 
-| Symptom                          | Check                                                                        |
-|----------------------------------|------------------------------------------------------------------------------|
-| Command not found                | Dev host wasn't reloaded; press `Cmd+R`.                                     |
-| Webview opens blank              | CSP too strict, or `localResourceRoots` doesn't include `media/`.            |
-| `data-source-line` missing       | Render rule isn't running; check overrides for `paragraph_open`, `heading_open`, `list_item_open`, `fence`, `blockquote_open`. |
-| No message in Debug Console      | `enableScripts` is false, or `acquireVsCodeApi()` was called twice.          |
+**What to test:** Preview renders markdown, source-line attributes are present on block elements, live re-rendering works, selection messages reach the host.
+
+**How to test:** Manual smoke test in the Extension Development Host. Inspect the webview DOM for `data-source-line` attributes. Select text and check Debug Console output.
+
+**Expected result:** All four verify checks in 3.6 pass.
 
 ---
 
-## Phase 4 — Bridge: webview selection → editor selection → AI
+## Phase 4 — LaTeX rendering
 
-**Goal:** A selection in the preview becomes a real selection in the source markdown editor and triggers Cursor AI.
+**Goal:** Inline (`$...$`) and display (`$$...$$`) LaTeX renders as properly typeset math in the preview.
 
 **What gets built in this phase:**
 
-- [src/sourceMapper.ts](src/sourceMapper.ts) — Pure helpers for translating line numbers.
-  - `toRange` — Turns a pair of line numbers into something the editor can highlight, and clips them so they never run off the end of the file.
-- [src/selectionBridge.ts](src/selectionBridge.ts) — The hand-off between the preview and the editor.
-  - `handleAskAboutSelection` — Brings the source file forward, highlights the lines the user picked, scrolls them into view, and asks Cursor AI about them.
+- Updated [src/previewProvider.ts](src/previewProvider.ts):
+  - `markdown-it-texmath` plugin added with KaTeX engine for `$...$` and `$$...$$` delimiters.
+  - `math_block` token gets a wrapper `<div>` with `data-source-line` attributes so display math blocks are clickable and selectable.
+  - KaTeX CSS served from `node_modules/katex/dist/katex.min.css` with fonts.
+  - CSP updated to allow `'unsafe-inline'` styles (required by KaTeX's inline `style` attributes).
+- Updated [package.json](package.json):
+  - `katex` and `markdown-it-texmath` added to `dependencies`.
 
-### 4.1 Create the new files
+### 4.1 Install dependencies
 
 ```bash
-touch src/sourceMapper.ts src/selectionBridge.ts
+npm install katex markdown-it-texmath
 ```
 
-**Result:** both files exist.
+**Result:** Both packages appear in `package.json` `dependencies`.
 
-**Verify:** `ls src/sourceMapper.ts src/selectionBridge.ts` prints both paths.
+**Verify:** `ls node_modules/katex/dist/katex.min.css` prints the path.
 
-### 4.2 Implement sourceMapper.ts
+### 4.2 Add KaTeX to the renderer
 
-Edit [src/sourceMapper.ts](src/sourceMapper.ts) and export:
+Edit [src/previewProvider.ts](src/previewProvider.ts):
 
-```typescript
-export function toRange(
-  doc: vscode.TextDocument,
-  startLine: number,
-  endLine: number,
-): vscode.Range
-```
-
-It clamps `startLine` and `endLine` to `[0, doc.lineCount - 1]` and uses the end-of-line column on `endLine` so the full last line is included.
-
-**Result:** a pure function with no `vscode.window` dependencies — easy to unit-test in Phase 7.
-
-**Verify:** `npm run compile` exits with `0`.
-
-### 4.3 Implement selectionBridge.ts
-
-Edit [src/selectionBridge.ts](src/selectionBridge.ts) and export:
-
-```typescript
-export async function handleAskAboutSelection(
-  doc: vscode.TextDocument,
-  message: { text: string; startLine: number; endLine: number },
-): Promise<void>
-```
-
-It must:
-
-1. Compute `range = toRange(doc, message.startLine - 1, message.endLine - 1)` — markdown-it line numbers are 1-based; `vscode.Position` is 0-based.
-2. `const editor = await vscode.window.showTextDocument(doc, { viewColumn: vscode.ViewColumn.One, preserveFocus: false })`.
-3. `editor.selection = new vscode.Selection(range.start, range.end)`.
-4. `editor.revealRange(range, vscode.TextEditorRevealType.InCenterIfOutsideViewport)`.
-5. `await vscode.commands.executeCommand(<configured ask command id>)` — leave as a TODO that just returns until Phase 5.
-
-**Result:** the selection round-trip works without the AI step.
-
-**Verify:** `npm run compile` exits with `0`.
-
-### 4.4 Wire it into previewProvider.ts
-
-In the `onDidReceiveMessage` handler in [src/previewProvider.ts](src/previewProvider.ts), replace the temporary `console.log` with:
-
-```typescript
-if (message.type === 'askAboutSelection') {
-  await handleAskAboutSelection(sourceDoc, message);
-}
-```
-
-where `sourceDoc` is the document the panel was created for.
+- Require `markdown-it-texmath` and `katex`.
+- Call `md.use(texmath, { engine: katex, delimiters: 'dollars' })`.
+- Add `node_modules/katex/dist` to `localResourceRoots`.
+- Add a `<link>` for `katex.min.css` in `buildHtml`.
+- Add `'unsafe-inline'` to the `style-src` CSP directive.
+- Add a custom renderer for `math_block` that wraps the output in a `<div>` with `data-source-line` attributes (texmath ignores token attributes set via `attrJoin`).
 
 ```bash
 npm run compile
 ```
 
-**Result:** clean build.
+**Result:** Clean build.
 
-**Verify:** no TypeScript errors.
+**Verify:** `npm run compile` exits with `0`.
 
-### 4.5 Run end-to-end
+### 4.3 Run end-to-end
+
+Open a markdown file containing inline math (`$E = mc^2$`) and display math (`$$\int_0^1 x^2\,dx$$`). Run `Ask Markdown: Open Preview`.
+
+**Result:** Math renders as typeset equations, not raw LaTeX source.
+
+**Verify:**
+
+1. Inline math renders inline with surrounding text.
+2. Display math renders centered on its own line.
+3. `\begin{aligned}` and `\begin{bmatrix}` environments render correctly.
+4. Double-clicking a display math block jumps to the correct source line.
+
+### Test method
+
+**What to test:** KaTeX renders inline and display math; source mapping works on math blocks.
+
+**How to test:** Open a file with the LaTeX constructs listed above. Visually confirm rendering. Double-click a math block and verify the editor jumps to the right line.
+
+**Expected result:** All math renders as typeset output. Source mapping works for `math_block` tokens.
+
+---
+
+## Phase 5 — Selection bridge and floating action bar
+
+**Goal:** Selecting text in the preview shows a floating toolbar. Clicking "Find in source" jumps to the matching lines in the editor. The source editor selection syncs with the webview selection in real time.
+
+**What gets built in this phase:**
+
+- Updated [media/preview.js](media/preview.js):
+  - A floating action bar with **Claude** and **Find in source** buttons appears above any text selection.
+  - On selection change, a `syncSelection` message is posted to the host so the source editor highlights the matching lines without stealing focus.
+  - Double-click on any block jumps to its source line via a `revealSource` message.
+- Updated [src/previewProvider.ts](src/previewProvider.ts):
+  - `revealSource` handler — Opens the source editor and highlights the matching line range.
+  - `syncSelection` handler — Highlights matching lines in the source editor without stealing focus from the webview.
+- Updated [media/preview.css](media/preview.css):
+  - Styles for the floating action bar and hover outlines on source-mapped elements.
+
+### 5.1 Build the floating action bar
+
+Edit [media/preview.js](media/preview.js). Create a `<div id="ask-bar">` with buttons. Show it above the selection on `selectionchange` (debounced) and `mouseup`. Hide it when the selection collapses.
+
+**Result:** Selecting text in the preview shows a floating toolbar.
+
+**Verify:** Select text; bar appears above selection; click outside; bar hides.
+
+### 5.2 Wire the message handlers
+
+Edit [src/previewProvider.ts](src/previewProvider.ts). Handle `revealSource` (show the source editor and set the selection) and `syncSelection` (highlight matching lines without stealing focus).
+
+```bash
+npm run compile
+```
+
+**Result:** Clean build.
+
+**Verify:** Select text in the preview; the source editor highlights the matching lines.
+
+### 5.3 Add scroll sync and click-to-jump
+
+In [src/previewProvider.ts](src/previewProvider.ts), subscribe to `vscode.window.onDidChangeTextEditorVisibleRanges` and post `scrollTo` messages to the webview. In [media/preview.js](media/preview.js), handle `scrollTo` by scrolling the nearest `[data-source-line]` element into view. Add a `dblclick` handler that posts `revealSource`.
+
+**Result:** Scrolling the editor scrolls the preview. Double-clicking a block jumps to its source.
+
+**Verify:** Scroll a long markdown file; preview keeps pace. Double-click a heading; editor cursor lands on it.
+
+### Test method
+
+**What to test:** Floating bar appears/hides correctly, Find in source jumps to the right line, sync selection highlights without focus change, scroll sync tracks editor position, double-click jumps work.
+
+**How to test:** Manual smoke test in the Extension Development Host with a markdown file containing headings, paragraphs, lists, code fences, blockquotes, and math blocks.
+
+**Expected result:** All interactions work for every block type. The floating bar does not flicker.
+
+---
+
+## Phase 6 — Claude Code WebSocket server
+
+**Goal:** The extension runs its own MCP-compatible WebSocket server. Claude CLI connects to it automatically. Clicking "Claude" in the preview sends the file and line range directly to Claude CLI over the WebSocket — no source editor needed.
+
+**What gets built in this phase:**
+
+- [src/claudeServer.ts](src/claudeServer.ts) — The WebSocket server that Claude CLI connects to.
+  - `startServer` — Starts a WebSocket server on a random port, writes a lock file to `~/.claude/ide/{port}.lock`, and begins accepting authenticated connections.
+  - `stopServer` — Closes all connections, removes the lock file, and shuts down the server.
+  - `broadcast` — Sends a JSON-RPC notification (like `at_mentioned`) to all connected Claude CLI clients.
+  - `isConnected` — Returns whether any Claude CLI client is currently connected.
+  - `handleMessage` — Responds to MCP protocol messages: `initialize`, `tools/list`, `tools/call`.
+  - MCP tools exposed: `getCurrentSelection`, `getOpenEditors`, `getWorkspaceFolders`.
+- Updated [src/extension.ts](src/extension.ts):
+  - Starts the server on activation, stops it on deactivation.
+- Updated [src/previewProvider.ts](src/previewProvider.ts):
+  - `askClaude` handler — Broadcasts `at_mentioned` with the file path and line range to all connected Claude CLI clients. Shows a warning if no client is connected.
+- Updated [media/preview.js](media/preview.js):
+  - "Claude" button posts an `askClaude` message with `startLine` and `endLine`.
+
+### 6.1 Install ws
+
+```bash
+npm install ws
+npm install -D @types/ws
+```
+
+**Result:** `ws` in `dependencies`, `@types/ws` in `devDependencies`.
+
+**Verify:** `npm ls ws` shows the installed version.
+
+### 6.2 Implement the WebSocket server
+
+Edit [src/claudeServer.ts](src/claudeServer.ts):
+
+- Generate a UUID auth token on startup.
+- Create an HTTP server and a `WebSocketServer` in `noServer` mode.
+- On `upgrade`, validate the `x-claude-code-ide-authorization` header against the auth token. Reject with 401 if it does not match.
+- On `connection`, add the client to a set and listen for JSON-RPC messages.
+- Handle `initialize` (respond with protocol version `2024-11-05` and capabilities), `tools/list`, and `tools/call`.
+- Write a lock file to `~/.claude/ide/{port}.lock` containing `pid`, `workspaceFolders`, `ideName`, `transport`, `authToken`.
+- On shutdown, remove the lock file and close all connections.
+- Export `broadcast(method, params)` to send JSON-RPC notifications to all clients.
+
+```bash
+npm run compile
+```
+
+**Result:** Clean build.
+
+**Verify:** `npm run compile` exits with `0`.
+
+### 6.3 Wire the server into extension lifecycle
+
+Edit [src/extension.ts](src/extension.ts). Call `startServer()` in `activate` and `stopServer()` in `deactivate`.
+
+```bash
+npm run compile
+```
+
+**Result:** Clean build.
+
+**Verify:** Reload the dev host. Check the Debug Console for `[ask-markdown] WebSocket server listening on port XXXXX`. Verify `ls ~/.claude/ide/*.lock` shows a new lock file.
+
+### 6.4 Wire the Claude button
+
+Edit [src/previewProvider.ts](src/previewProvider.ts). Handle the `askClaude` message type by calling `broadcast('at_mentioned', { filePath, lineStart, lineEnd })`. Show a warning if `isConnected()` is false.
+
+Edit [media/preview.js](media/preview.js). The "Claude" button posts `{ type: 'askClaude', startLine, endLine }`.
+
+```bash
+npm run compile
+```
+
+**Result:** Clean build.
+
+### 6.5 Run end-to-end
 
 1. Reload the dev host with `Cmd+R`.
-2. Open a markdown file and run **`Ask Markdown: Open Preview`**.
-3. Select a paragraph inside the preview.
+2. Open a terminal and run `claude` in the workspace directory.
+3. Open a markdown file and run `Ask Markdown: Open Preview`.
+4. Select text in the preview and click "Claude".
 
-**Result:** focus jumps back to the source editor, the corresponding lines are highlighted, and the view scrolls to reveal them.
+**Result:** Claude CLI receives the file reference with the line range. The source editor does not need to be open.
 
-### Verify (end of phase)
+**Verify:**
 
-Walk through every construct in this table and confirm the editor selection matches:
+1. Debug Console shows `[ask-markdown] Claude CLI connected` when `claude` starts.
+2. Clicking "Claude" does not open or focus the source editor.
+3. Claude CLI shows the `@file.md#L10-L20` reference in its context.
+4. With no `claude` running, clicking "Claude" shows a warning message.
 
-| Markdown construct        | Expected mapping                              |
-|---------------------------|-----------------------------------------------|
-| Single paragraph          | exact line range of that paragraph            |
-| Heading                   | the heading line                              |
-| List item                 | the list item lines                           |
-| Multi-paragraph selection | start of first → end of last                  |
-| Code fence                | full fence including the ``` lines            |
-| Blockquote                | full quote block                              |
+### Test method
 
-### If verification fails
+**What to test:** Server starts and creates a lock file. Claude CLI connects via the lock file. `at_mentioned` broadcast reaches Claude CLI. Warning appears when disconnected.
 
-| Symptom                              | Check                                                                       |
-|--------------------------------------|-----------------------------------------------------------------------------|
-| Selection is off by one line         | 0/1-based mismatch in `toRange`; markdown-it is 1-based.                    |
-| Wrong file gets focus                | `showTextDocument` got a stale `sourceDoc`; confirm panel storage in 3.2.   |
-| Selection is empty                   | `range.end` column is 0; use end-of-line column on `endLine`.               |
-| Editor doesn't scroll                | `revealRange` not called, or wrong reveal type.                             |
+**How to test:** Reload the dev host, run `claude` in a terminal, select text in the preview, click "Claude". Also test with no `claude` running.
+
+**Expected result:** Claude CLI receives the reference. Warning appears when disconnected.
 
 ---
 
-## Phase 5 — Find a stable Cursor "ask about selection" command
+## Phase 7 — Settings and auto-open
 
-**Goal:** Know which `vscode.commands.executeCommand(<id>)` actually opens Cursor's AI chat with the current selection.
+**Goal:** The extension opens the preview automatically for markdown files and lets the user toggle features via settings.
 
 **What gets built in this phase:**
 
-- A new setting `ask-markdown.askCommandId` — Lets the user override which Cursor command we call, in case Cursor renames it later.
-- An updated `selectionBridge.ts` — Reads the setting and runs that command after setting the editor selection.
+- Updated [src/extension.ts](src/extension.ts):
+  - Auto-open logic — Opens the preview when a markdown file becomes active, respecting the `autoOpen` setting and remembering dismissed previews.
+- Updated [src/previewProvider.ts](src/previewProvider.ts):
+  - Tracks dismissed previews so auto-open does not reopen a preview the user closed.
+  - Sets the editor layout to a 1:3 ratio (source : preview) when the preview opens.
+- Updated [package.json](package.json):
+  - `ask-markdown.autoOpen` setting — Automatically open the preview when a markdown file is opened (default: true).
+  - `ask-markdown.showFloatingButton` setting — Show or hide the floating action bar (default: true).
 
-### 5.1 Discover candidates
+### 7.1 Add the settings
 
-Add temporarily to `activate` in [src/extension.ts](src/extension.ts):
+Edit [package.json](package.json). Add `autoOpen` (boolean, default true) and `showFloatingButton` (boolean, default true) under `contributes.configuration.properties`.
 
-```typescript
-const all = await vscode.commands.getCommands(true);
-console.log('[ask-markdown] candidates:',
-  all.filter(c => /chat|ask|cursor|ai/i.test(c)));
-```
+**Result:** Settings appear in the Settings UI.
+
+**Verify:** Open Settings and search for "Ask Markdown". Both settings appear.
+
+### 7.2 Implement auto-open
+
+Edit [src/extension.ts](src/extension.ts). Subscribe to `vscode.window.onDidChangeActiveTextEditor`. When a markdown file becomes active and `autoOpen` is true, call `openPreview` unless the preview was previously dismissed or already open.
+
+Track dismissed previews in [src/previewProvider.ts](src/previewProvider.ts) using a `Set`. Clear the dismissed state when the document is closed so reopening the file auto-opens the preview again.
 
 ```bash
 npm run compile
 ```
 
-Reload the dev host and read the filtered list from the **Debug Console**.
+**Result:** Clean build.
 
-**Result:** a list of plausible command IDs.
+**Verify:** Open a markdown file; the preview opens automatically. Close the preview; it does not reopen until the file is closed and reopened.
 
-**Verify:** the Debug Console prints a non-empty array.
+### 7.3 Wire the floating button setting
 
-### 5.2 Test each candidate
-
-With a real selection in a markdown file in the dev host:
-
-1. Command Palette → `Developer: Run Command`.
-2. Paste each candidate ID, run it, and note which one opens Cursor's chat **with the current selection already attached**.
-
-**Result:** one ID is identified as the working one.
-
-**Verify:** running that ID by hand opens Cursor's chat with the selection.
-
-### 5.3 Make the chosen ID configurable
-
-Edit [package.json](package.json), under `"contributes"`, add:
-
-```json
-"configuration": {
-  "title": "Ask Markdown",
-  "properties": {
-    "ask-markdown.askCommandId": {
-      "type": "string",
-      "default": "<the id you found>",
-      "description": "Cursor command invoked after the editor selection has been set."
-    }
-  }
-}
-```
-
-Then in [src/selectionBridge.ts](src/selectionBridge.ts):
-
-```typescript
-const id = vscode.workspace
-  .getConfiguration('ask-markdown')
-  .get<string>('askCommandId');
-if (id) await vscode.commands.executeCommand(id);
-```
-
-Remove the temporary `getCommands` log from `extension.ts`.
+Post `updateShowFloatingButton` messages from the host when the setting changes. In [media/preview.js](media/preview.js), respect the `data-enabled` attribute on the bar.
 
 ```bash
 npm run compile
 ```
 
-**Result:** clean build with the setting wired in.
+**Result:** Toggling the setting shows/hides the floating bar.
 
-**Verify:** the new setting appears under **Settings → Extensions → Ask Markdown** in the dev host.
+### Test method
 
-### 5.4 Run end-to-end
+**What to test:** Auto-open respects the setting and the dismissed state. Floating button setting toggles the bar. Settings take effect without reloading.
 
-Reload the dev host. Select text in the preview.
+**How to test:** Toggle each setting in the Settings UI and verify behavior.
 
-**Result:** with no manual palette step, Cursor's chat opens with the text included.
-
-**Verify:** Cursor's chat panel appears with the selected text attached.
-
-### Verify (end of phase)
-
-1. Setting `ask-markdown.askCommandId` exists and is editable.
-2. Selecting text in the preview opens Cursor's chat with that text.
-3. Changing the setting to a bogus ID falls through gracefully (no crash).
-4. Removing the temporary `getCommands` log left no dead code.
-
-### If verification fails
-
-| Symptom                              | Check                                                                          |
-|--------------------------------------|--------------------------------------------------------------------------------|
-| No candidate opens chat with selection | Use the fallback in 5.5: copy to clipboard and prompt the user to paste.     |
-| Cursor opens chat but selection empty  | The command needs an `editor.selection` set; confirm 4.3 step 3.             |
-| Setting not visible                   | `package.json` `configuration` block is in the wrong place; must be under `contributes`. |
-
-### 5.5 Fallbacks (if no stable command exists)
-
-- Call `vscode.env.clipboard.writeText(message.text)` and show *"Selection copied. Open Cursor chat and paste."*.
-- Leave the editor selection in place so the user can use their normal chat shortcut.
+**Expected result:** All settings work as described.
 
 ---
 
-## Phase 6 — Polish
+## Phase 8 — Testing
 
-**Goal:** Make the extension feel built-in.
-
-**What gets built in this phase:**
-
-- Floating action bar in the preview — A small **Ask / Copy / Find in source** toolbar that pops up when text is selected.
-- Scroll sync — As the user scrolls the editor, the preview scrolls to the matching block (and vice versa on click).
-- Click-to-jump — Clicking a block in the preview moves the editor cursor to the matching line.
-- New settings:
-  - `ask-markdown.autoOpen` — Opens the preview automatically whenever a markdown file is opened.
-  - `ask-markdown.showFloatingButton` — Shows or hides the floating action bar.
-
-### 6.1 Floating action bar
-
-Edit [media/preview.js](media/preview.js): add a `<div id="ask-bar">` with **Ask**, **Copy**, **Find in source** buttons. Show on selection, hide on collapse.
-
-**Result:** selecting text shows a small toolbar above the selection.
-
-**Verify:** select text in the preview; the bar appears; clicking outside hides it.
-
-### 6.2 Scroll sync
-
-In [src/extension.ts](src/extension.ts), subscribe to `vscode.window.onDidChangeTextEditorVisibleRanges` and post `{ type: 'scrollTo', line }` to the webview. In the webview, scroll the matching `[data-source-line]` element into view.
-
-**Result:** scrolling the editor scrolls the preview.
-
-**Verify:** scroll a long markdown file; preview keeps pace.
-
-### 6.3 Click-to-jump
-
-In [media/preview.js](media/preview.js), on click of a block, post `{ type: 'revealSource', line }`. The host moves the editor cursor.
-
-**Result:** clicking a block in the preview moves the editor cursor to that line.
-
-**Verify:** click each construct from the Phase 4 table; the editor cursor lands on the right line.
-
-### 6.4 Add settings
-
-Edit [package.json](package.json) `"contributes.configuration.properties"` to add `ask-markdown.autoOpen` and `ask-markdown.showFloatingButton`. Wire each into the relevant module.
-
-```bash
-npm run compile
-```
-
-**Result:** new settings appear in the Settings UI and take effect without restart.
-
-### Verify (end of phase)
-
-1. Floating bar appears on selection and disappears on collapse.
-2. Scroll sync keeps the preview aligned with the editor.
-3. Click-to-jump moves the editor cursor.
-4. All three settings (`askCommandId`, `autoOpen`, `showFloatingButton`) take effect without reloading the host.
-5. Walk every Phase 4 construct in light, dark, and high-contrast themes.
-
-### If verification fails
-
-| Symptom                            | Check                                                            |
-|------------------------------------|------------------------------------------------------------------|
-| Floating bar flickers              | Use `selectionchange` debounce, not just `mouseup`.              |
-| Scroll sync feedback loop          | Guard against echoing scroll events back to the source side.    |
-| Settings don't take effect         | `vscode.workspace.onDidChangeConfiguration` not wired.           |
-
----
-
-## Phase 7 — Testing
-
-**Goal:** Catch mapping bugs before users do.
+**Goal:** Catch mapping bugs and protocol issues before users do.
 
 **What gets built in this phase:**
 
-- `src/test/sourceMapper.test.ts` — Proves the line-number helper handles single lines, multi-line ranges, the last line of the file, and out-of-range numbers.
-- `src/test/renderRule.test.ts` — Proves the markdown render rule stamps the right `data-source-line` values on real markdown input.
-- `src/test/integration.test.ts` — Pretends to be the webview, sends a selection message, and checks the editor highlights the expected lines.
+- [src/test/sourceMapper.test.ts](src/test/sourceMapper.test.ts) — Proves the line-number helper handles single lines, multi-line ranges, the last line of the file, out-of-range numbers, and NaN.
+- [src/test/renderRule.test.ts](src/test/renderRule.test.ts) — Proves the markdown render rule stamps the right `data-source-line` values on paragraphs, headings, lists, fences, blockquotes, and math blocks.
 
-### 7.1 Unit tests for the source mapper
+### 8.1 Unit tests for the source mapper
 
-Cover: single line, multi-line, last line of file, line numbers past EOF (should clamp), negative line numbers.
+Cover: single line, multi-line, last line of file, line numbers past EOF (should clamp), negative line numbers, NaN (should default to 0), reversed start/end (should swap).
 
 ```bash
 npm test
 ```
 
-**Result:** unit suite passes.
+**Result:** All source mapper tests pass.
 
-**Verify:** test runner reports all source mapper tests green.
+**Verify:** Test runner reports all tests green.
 
-### 7.2 Unit tests for the render rule
+### 8.2 Unit tests for the render rule
 
-Feed a known markdown string into the configured `markdown-it`, then assert the output HTML contains `data-source-line="N"` on the right elements for paragraphs, headings, lists, fences, and quotes.
-
-**Result:** render rule suite passes.
-
-**Verify:** assertions cover at least the five block types.
-
-### 7.3 Integration tests via @vscode/test-electron
-
-Open a markdown document, simulate a `postMessage` from a fake webview, assert `vscode.window.activeTextEditor.selection` equals the expected `vscode.Selection`.
+Feed known markdown strings into the configured `markdown-it` instance. Assert the output HTML contains `data-source-line="N"` on the right elements for paragraphs, headings, lists, fences, blockquotes, and `math_block` tokens.
 
 ```bash
 npm test
 ```
 
-**Result:** integration suite passes in a headless VS Code instance.
+**Result:** All render rule tests pass.
 
-### Verify (end of phase)
+**Verify:** Assertions cover at least six block types including math.
 
-1. `npm test` exits with `0`.
-2. At least one regression test exists for any bug actually hit during Phases 3 / 4.
-3. CI (or a fresh local clone) reproduces the same green run.
+### Test method
 
-### If verification fails
+**What to test:** Line clamping edge cases, source-line attribute injection for all block types.
 
-| Symptom                              | Check                                                                |
-|--------------------------------------|----------------------------------------------------------------------|
-| `@vscode/test-electron` won't launch | Headless VS Code download blocked; check network/proxy.              |
-| Mapper tests pass but live preview wrong | Render rule isn't covered; add the failing input as a test case. |
-| Tests pass locally, fail on CI       | File system case sensitivity or line endings (CRLF vs LF).           |
+**How to test:**
+
+```bash
+npm test
+```
+
+**Expected result:** Exit code `0`. All tests pass.
 
 ---
 
-## Phase 8 — Ship
+## Phase 9 — Ship
 
 **Goal:** Build a `.vsix` and (optionally) publish it.
 
 **What gets built in this phase:**
 
 - A production bundle of `dist/extension.js` — Minified, no sourcemaps.
-- A `.vsix` package — A single file someone can install in any VS Code or Cursor.
-- A real [README.md](README.md) — Replaces any leftover Yeoman template text.
+- A `.vsix` package — A single file someone can install in VS Code or Cursor.
+- A real [README.md](README.md) — Replaces any leftover template text.
 
-### 8.1 Production build
+### 9.1 Production build
 
 ```bash
 npm run package
@@ -615,7 +543,7 @@ npm run package
 
 **Verify:** `dist/extension.js` mtime is recent and file is smaller than the dev build.
 
-### 8.2 Install vsce
+### 9.2 Install vsce
 
 ```bash
 npm install -D @vscode/vsce
@@ -625,88 +553,64 @@ npm install -D @vscode/vsce
 
 **Verify:** `npx vsce --version` prints a version.
 
-### 8.3 Edit the README
+### 9.3 Edit the README
 
-Open [README.md](README.md). Replace any leftover Yeoman template text with a real description and usage section. `vsce` refuses to package extensions whose README still contains the template.
+Open [README.md](README.md). Replace any leftover template text with a real description and usage section.
 
 **Result:** README has real content.
 
-**Verify:** grep the README for the string `This is the README` — no matches.
+**Verify:** `grep "This is the README" README.md` returns no matches.
 
-### 8.4 Build the .vsix
+### 9.4 Build the .vsix
 
 ```bash
 npx vsce package
 ```
 
-**Result:** a file like `ask-markdown-0.0.1.vsix` appears at the repo root.
+**Result:** A file like `ask-markdown-0.0.1.vsix` appears at the repo root.
 
-**Verify:**
+**Verify:** `ls *.vsix` shows the file.
 
-```bash
-ls *.vsix
-```
-
-The file exists.
-
-### 8.5 (Optional) Publish
-
-```bash
-npx vsce login <publisher>
-npx vsce publish
-```
-
-**Result:** the extension is live on the marketplace.
-
-**Verify:** the marketplace listing shows the new version.
-
-### 8.6 Smoke-test the packaged extension
+### 9.5 Smoke-test the packaged extension
 
 In a clean (non-dev-host) editor window:
 
-1. **Extensions view → … menu → Install from VSIX…** → pick the `.vsix`.
+1. **Extensions view -> ... menu -> Install from VSIX...** -> pick the `.vsix`.
 2. Open a `.md` file.
-3. Run `Ask Markdown: Open Preview` and walk through the Phase 4 verification table.
+3. Run `Ask Markdown: Open Preview` and verify rendering, selection, Claude button, and scroll sync all work.
 
-**Result:** packaged behavior matches the dev host.
+**Result:** Packaged behavior matches the dev host.
 
-### Verify (end of phase)
+### Test method
 
-1. `dist/extension.js` is the production build.
-2. `*.vsix` exists at the repo root.
-3. Installing the `.vsix` in a clean window works end-to-end.
-4. The Phase 4 construct table all passes against the packaged extension.
+**What to test:** The packaged extension installs and works end-to-end.
 
-### If verification fails
+**How to test:** Install the `.vsix` in a clean window. Open a markdown file with math. Test preview rendering, floating bar, Claude button (with `claude` running in a terminal), and scroll sync.
 
-| Symptom                                     | Check                                                          |
-|---------------------------------------------|----------------------------------------------------------------|
-| `vsce package` complains about the README   | Template text still present; rewrite it.                       |
-| `vsce package` complains about repository   | `repository` field missing or malformed in `package.json`.     |
-| Installed extension doesn't activate        | `main` field points at a path not included in the bundle.     |
-| Webview blank in packaged build             | `media/` folder not in `files` glob; add it or rely on default. |
+**Expected result:** All features work identically to the dev host.
 
 ---
 
 ## Daily workflow
 
-| Action                       | How                                                       |
-|------------------------------|-----------------------------------------------------------|
-| Edit code                    | edit files under `src/` or `media/`                       |
-| Rebuild                      | `npm run compile` (or `npm run watch` for auto-rebuild)   |
-| Reload extension after edits | `Cmd+R` in the dev host window                            |
-| Stop debugging               | close the dev host, or hit the red stop button            |
-| Run tests                    | `npm test`                                                |
-| Lint                         | `npm run lint`                                            |
+| Action                        | How                                                        |
+|-------------------------------|------------------------------------------------------------|
+| Edit code                     | Edit files under `src/` or `media/`                        |
+| Rebuild                       | `npm run compile` (or `npm run watch` for auto-rebuild)    |
+| Reload extension after edits  | `Cmd+R` in the dev host window                             |
+| Stop debugging                | Close the dev host, or hit the red stop button             |
+| Run tests                     | `npm test`                                                 |
+| Lint                          | `npm run lint`                                             |
 
 ---
 
-## Risks & mitigations
+## Risks and mitigations
 
-| Risk                                                     | Mitigation                                                                                       |
-|----------------------------------------------------------|--------------------------------------------------------------------------------------------------|
-| Cursor changes its ask/chat command IDs                  | `ask-markdown.askCommandId` setting; document the override in the README.                        |
-| Tricky selections (tables, nested lists) span multiple `token.map` ranges | Implement a deliberate expansion rule and add a test per construct.                |
-| Webview security                                         | Use a CSP with a per-load nonce; never inject user content as raw HTML; treat markdown as untrusted. |
-| Conflict with VS Code's built-in markdown preview        | Use distinct `Ask Markdown:` command titles; document the difference in the README.              |
-| Activation never fires                                   | Always include `onLanguage:markdown` in `activationEvents`.                                       |
+| Risk                                                        | Mitigation                                                                                            |
+|-------------------------------------------------------------|-------------------------------------------------------------------------------------------------------|
+| Claude CLI changes the MCP protocol or lock file format     | Pin to protocol version `2024-11-05`; monitor `claudecode.nvim` for upstream changes.                 |
+| KaTeX inline styles blocked by stricter CSP in future       | `'unsafe-inline'` is required; document this in the README.                                           |
+| Tricky selections (tables, nested lists) span wrong ranges  | Source-map injection covers all block types; add test cases for each.                                  |
+| Lock file conflicts with Claude Code VS Code extension      | Use `ideName: 'AskMarkdown'` to distinguish; Claude CLI connects to all advertised servers.           |
+| Webview security                                            | CSP with per-load nonce; never inject user content as raw HTML; treat markdown as untrusted.           |
+| Activation never fires                                      | `onLanguage:markdown` in `activationEvents` ensures activation on any markdown file.                  |
