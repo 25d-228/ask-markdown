@@ -4,7 +4,7 @@
   "description": "",
   "version": "0.0.1",
   "engines": {
-    "vscode": "^1.85.0"
+    "vscode": "^1.115.0"
   },
   "categories": [
     "Other"
@@ -14,12 +14,34 @@
   ],
   "main": "./dist/extension.js",
   "contributes": {
-    "commands": [
+    "customEditors": [
       {
-        "command": "ask-markdown.openPreview",
-        "title": "Ask Markdown: Open Preview"
+        "viewType": "askMarkdown.preview",
+        "displayName": "Ask Markdown",
+        "selector": [
+          {
+            "filenamePattern": "*.md"
+          }
+        ],
+        "priority": "default"
       }
     ],
+    "commands": [
+      {
+        "command": "ask-markdown.showPreview",
+        "title": "Ask Markdown: Show Preview",
+        "icon": "$(open-preview)"
+      }
+    ],
+    "menus": {
+      "editor/title": [
+        {
+          "command": "ask-markdown.showPreview",
+          "when": "resourceExtname == .md && activeCustomEditorId != askMarkdown.preview",
+          "group": "navigation"
+        }
+      ]
+    },
     "configuration": {
       "title": "Ask Markdown",
       "properties": {
@@ -58,6 +80,7 @@
     "@types/ws": "^8.18.1",
     "@vscode/test-cli": "^0.0.12",
     "@vscode/test-electron": "^2.5.2",
+    "@vscode/vsce": "^3.7.1",
     "esbuild": "^0.27.3",
     "eslint": "^9.39.3",
     "npm-run-all": "^4.1.5",

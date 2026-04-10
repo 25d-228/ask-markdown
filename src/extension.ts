@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { openPreview } from './previewProvider';
+import { AskMarkdownEditorProvider } from './previewProvider';
 import { startServer, stopServer } from './claudeServer';
 
 export function activate(context: vscode.ExtensionContext) {
@@ -12,16 +12,17 @@ export function activate(context: vscode.ExtensionContext) {
 	});
 
 	context.subscriptions.push(
-		vscode.commands.registerCommand('ask-markdown.openPreview', () => {
-			const editor = vscode.window.activeTextEditor;
-			if (!editor || editor.document.languageId !== 'markdown') {
-				vscode.window.showWarningMessage(
-					'Ask Markdown: open a markdown file first.',
-				);
-				return;
-			}
+		AskMarkdownEditorProvider.register(context),
 
-			openPreview(context, editor.document);
+		vscode.commands.registerCommand('ask-markdown.showPreview', () => {
+			const uri = vscode.window.activeTextEditor?.document.uri;
+			if (uri) {
+				vscode.commands.executeCommand(
+					'vscode.openWith',
+					uri,
+					AskMarkdownEditorProvider.viewType,
+				);
+			}
 		}),
 	);
 }

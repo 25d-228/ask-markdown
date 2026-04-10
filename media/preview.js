@@ -51,12 +51,27 @@
 		};
 	}
 
+	// ── Toggle source button (fixed top-right) ──
+
+	const toggleBtn = document.createElement('button');
+	toggleBtn.id = 'toggle-source';
+	toggleBtn.textContent = '</>';
+	toggleBtn.title = 'Show Source';
+	document.body.appendChild(toggleBtn);
+
+	toggleBtn.addEventListener('click', function () {
+		vscode.postMessage({ type: 'toggleSource' });
+	});
+
 	// ── Floating action bar ──
 
 	const bar = document.createElement('div');
 	bar.id = 'ask-bar';
 	bar.innerHTML =
 		'<button data-action="claude">Claude</button>' +
+		'<span class="ask-bar-sep"></span>' +
+		'<button data-action="codex">Codex</button>' +
+		'<span class="ask-bar-sep"></span>' +
 		'<button data-action="find">Find in source</button>';
 	document.body.appendChild(bar);
 
@@ -105,6 +120,12 @@
 				startLine: currentRange.startLine,
 				endLine: currentRange.endLine,
 			});
+		} else if (action === 'codex') {
+			vscode.postMessage({
+				type: 'askCodex',
+				startLine: currentRange.startLine,
+				endLine: currentRange.endLine,
+			});
 		} else if (action === 'find') {
 			vscode.postMessage({
 				type: 'revealSource',
@@ -131,8 +152,8 @@
 
 	// Also fire on mouseup for snappier feedback.
 	document.addEventListener('mouseup', function (e) {
-		// Ignore clicks on the bar itself.
-		if (bar.contains(e.target)) {
+		// Ignore clicks on the bar itself and toggle button.
+		if (bar.contains(e.target) || toggleBtn.contains(e.target)) {
 			return;
 		}
 		clearTimeout(selTimer);
@@ -162,7 +183,6 @@
 		const msg = e.data;
 		if (msg.type === 'scrollTo') {
 			const line = msg.line;
-			// Find the element closest to this source line.
 			const all = document.querySelectorAll('[data-source-line]');
 			let best = null;
 			let bestDist = Infinity;

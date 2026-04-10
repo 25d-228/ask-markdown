@@ -120,6 +120,36 @@ img {
 	color: var(--vscode-editor-selectionForeground, inherit);
 }
 
+/* ── Toggle source button ── */
+
+#toggle-source {
+	position: fixed;
+	top: 8px;
+	right: 8px;
+	z-index: 99;
+	background: var(--vscode-editorWidget-background, #252526);
+	border: 1px solid var(--vscode-editorWidget-border, var(--vscode-panel-border));
+	color: var(--vscode-editor-foreground);
+	padding: 4px 10px;
+	border-radius: 4px;
+	cursor: pointer;
+	font-family: var(--vscode-editor-font-family);
+	font-size: 0.85em;
+	opacity: 0.6;
+	transition: opacity 0.15s;
+}
+
+#toggle-source:hover {
+	opacity: 1;
+}
+
+#toggle-source.active {
+	background: var(--vscode-button-background, #0e639c);
+	color: var(--vscode-button-foreground, #fff);
+	border-color: var(--vscode-button-background, #0e639c);
+	opacity: 1;
+}
+
 /* ── Floating action bar ── */
 
 #ask-bar {
@@ -148,6 +178,16 @@ img {
 
 #ask-bar button:hover {
 	background: var(--vscode-toolbar-hoverBackground, rgba(127, 127, 127, 0.2));
+}
+
+.ask-bar-sep {
+	display: inline-block;
+	width: 1px;
+	height: 14px;
+	background: var(--vscode-editorWidget-border, var(--vscode-panel-border));
+	vertical-align: middle;
+	margin: 0 2px;
+	opacity: 0.5;
 }
 
 /* ── Clickable blocks ── */
