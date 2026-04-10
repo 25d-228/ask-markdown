@@ -18,10 +18,6 @@
       {
         "command": "ask-markdown.openPreview",
         "title": "Ask Markdown: Open Preview"
-      },
-      {
-        "command": "ask-markdown.askAboutSelection",
-        "title": "Ask Markdown: Ask About Selection"
       }
     ],
     "configuration": {
@@ -31,16 +27,6 @@
           "type": "string",
           "default": "",
           "markdownDescription": "Command ID invoked after the editor selection is set (e.g. `aichat.newchataction`). Leave blank to skip the AI step — the selection will still be set in the editor."
-        },
-        "ask-markdown.autoOpen": {
-          "type": "boolean",
-          "default": true,
-          "description": "Automatically open the Ask Markdown preview when a markdown file is opened."
-        },
-        "ask-markdown.showFloatingButton": {
-          "type": "boolean",
-          "default": true,
-          "description": "Show the floating action bar (Ask / Copy / Find in source) when text is selected in the preview."
         }
       }
     }

@@ -56,8 +56,9 @@
 	const bar = document.createElement('div');
 	bar.id = 'ask-bar';
 	bar.innerHTML =
-		'<button data-action="ask">Ask</button>' +
-		'<button data-action="copy">Copy</button>' +
+		'<button data-action="cursor">Cursor</button>' +
+		'<button data-action="claude">Claude</button>' +
+		'<button data-action="codex">Codex</button>' +
 		'<button data-action="find">Find in source</button>';
 	document.body.appendChild(bar);
 
@@ -100,17 +101,24 @@
 			return;
 		}
 		const action = btn.dataset.action;
-		if (action === 'ask') {
+		if (action === 'cursor') {
 			vscode.postMessage({
 				type: 'askAboutSelection',
 				text: currentRange.text,
 				startLine: currentRange.startLine,
 				endLine: currentRange.endLine,
 			});
-		} else if (action === 'copy') {
-			navigator.clipboard.writeText(currentRange.text).catch(function () {
-				// Clipboard may be blocked by CSP; fall back to host.
-				vscode.postMessage({ type: 'copyText', text: currentRange.text });
+		} else if (action === 'claude') {
+			vscode.postMessage({
+				type: 'askClaude',
+				startLine: currentRange.startLine,
+				endLine: currentRange.endLine,
+			});
+		} else if (action === 'codex') {
+			vscode.postMessage({
+				type: 'askCodex',
+				startLine: currentRange.startLine,
+				endLine: currentRange.endLine,
 			});
 		} else if (action === 'find') {
 			vscode.postMessage({

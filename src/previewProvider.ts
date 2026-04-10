@@ -23,20 +23,6 @@ export interface AskMarkdownPanel {
 /** Track which documents already have a preview open. */
 const openPreviews = new Map<string, vscode.WebviewPanel>();
 
-/** Documents whose preview was manually closed — don't auto-reopen. */
-const dismissedPreviews = new Set<string>();
-
-export function hasPreview(document: vscode.TextDocument): boolean {
-	return openPreviews.has(document.uri.toString());
-}
-
-export function wasDismissed(document: vscode.TextDocument): boolean {
-	return dismissedPreviews.has(document.uri.toString());
-}
-
-export function clearDismissed(uri: string): void {
-	dismissedPreviews.delete(uri);
-}
 
 const VIEW_TYPE = 'askMarkdownPreview';
 
@@ -240,6 +226,36 @@ export function openPreview(
 					range,
 					vscode.TextEditorRevealType.InCenterIfOutsideViewport,
 				);
+			} else if (message.type === 'askClaude') {
+				const startLine = Math.max(0, Number(message.startLine) - 1);
+				const endLine = Math.max(0, Number(message.endLine) - 1);
+				const range = toRange(document, startLine, endLine);
+				const editor = await vscode.window.showTextDocument(document, {
+					viewColumn: vscode.ViewColumn.One,
+					preserveFocus: false,
+				});
+				editor.selection = new vscode.Selection(range.start, range.end);
+				editor.revealRange(
+					range,
+					vscode.TextEditorRevealType.InCenterIfOutsideViewport,
+				);
+				await vscode.commands.executeCommand('claude-vscode.sidebar.open');
+				await vscode.commands.executeCommand('claude-code.insertAtMentioned');
+			} else if (message.type === 'askCodex') {
+				const startLine = Math.max(0, Number(message.startLine) - 1);
+				const endLine = Math.max(0, Number(message.endLine) - 1);
+				const range = toRange(document, startLine, endLine);
+				const editor = await vscode.window.showTextDocument(document, {
+					viewColumn: vscode.ViewColumn.One,
+					preserveFocus: false,
+				});
+				editor.selection = new vscode.Selection(range.start, range.end);
+				editor.revealRange(
+					range,
+					vscode.TextEditorRevealType.InCenterIfOutsideViewport,
+				);
+				await vscode.commands.executeCommand('chatgpt.addToThread');
+				await vscode.commands.executeCommand('chatgpt.openSidebar');
 			} else if (message.type === 'syncSelection') {
 				const startLine = Math.max(0, Number(message.startLine) - 1);
 				const endLine = Math.max(0, Number(message.endLine) - 1);
@@ -254,8 +270,6 @@ export function openPreview(
 						vscode.TextEditorRevealType.InCenterIfOutsideViewport,
 					);
 				}
-			} else if (message.type === 'copyText') {
-				await vscode.env.clipboard.writeText(String(message.text));
 			}
 		},
 	);
@@ -276,12 +290,11 @@ export function openPreview(
 	// Set editor layout to 1:3 ratio (source : preview).
 	vscode.commands.executeCommand('vscode.setEditorLayout', {
 		orientation: 0,
-		groups: [{ size: 0.25 }, { size: 0.75 }],
+		groups: [{ size: 0.4 }, { size: 0.6 }],
 	});
 
 	panel.onDidDispose(() => {
 		openPreviews.delete(key);
-		dismissedPreviews.add(key);
 		changeSubscription.dispose();
 		messageSubscription.dispose();
 		scrollSubscription.dispose();
