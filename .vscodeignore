@@ -1,5 +1,7 @@
 .vscode/**
 .vscode-test/**
+.claude/**
+.cursor/**
 out/**
 node_modules/**
 !node_modules/katex/dist/**
@@ -8,6 +10,7 @@ src/**
 .yarnrc
 esbuild.js
 vsc-extension-quickstart.md
+claudecode-nvim-analysis.md
 **/tsconfig.json
 **/eslint.config.mjs
 **/*.map
