@@ -70,14 +70,15 @@
 	bar.innerHTML =
 		'<button data-action="claude">Claude</button>' +
 		'<span class="ask-bar-sep"></span>' +
-		'<button data-action="codex">Codex</button>' +
-		'<span class="ask-bar-sep"></span>' +
 		'<button data-action="find">Find in source</button>';
 	document.body.appendChild(bar);
 
 	let currentRange = null;
 
 	function showBar() {
+		if (bar.dataset.enabled === 'false') {
+			return;
+		}
 		const sel = window.getSelection();
 		if (!sel || sel.isCollapsed || !sel.rangeCount) {
 			hideBar();
@@ -93,6 +94,7 @@
 		// Sync selection to the source editor (focus stays in webview).
 		vscode.postMessage({
 			type: 'syncSelection',
+			text: currentRange.text,
 			startLine: currentRange.startLine,
 			endLine: currentRange.endLine,
 		});
@@ -105,7 +107,10 @@
 
 	function hideBar() {
 		bar.style.display = 'none';
-		currentRange = null;
+		if (currentRange) {
+			vscode.postMessage({ type: 'previewSelectionCleared' });
+			currentRange = null;
+		}
 	}
 
 	bar.addEventListener('click', function (e) {
@@ -117,12 +122,6 @@
 		if (action === 'claude') {
 			vscode.postMessage({
 				type: 'askClaude',
-				startLine: currentRange.startLine,
-				endLine: currentRange.endLine,
-			});
-		} else if (action === 'codex') {
-			vscode.postMessage({
-				type: 'askCodex',
 				startLine: currentRange.startLine,
 				endLine: currentRange.endLine,
 			});
@@ -179,9 +178,19 @@
 
 	// ── Scroll sync (host → webview) ──
 
+	var scrollingFromSource = false;
+	var scrollSourceTimer = null;
+
 	window.addEventListener('message', function (e) {
 		const msg = e.data;
 		if (msg.type === 'scrollTo') {
+			scrollingFromSource = true;
+			if (scrollSourceTimer) {
+				clearTimeout(scrollSourceTimer);
+			}
+			scrollSourceTimer = setTimeout(function () {
+				scrollingFromSource = false;
+			}, 300);
 			const line = msg.line;
 			const all = document.querySelectorAll('[data-source-line]');
 			let best = null;
@@ -198,9 +207,52 @@
 			if (best) {
 				best.scrollIntoView({ behavior: 'smooth', block: 'center' });
 			}
+		} else if (msg.type === 'updateContent') {
+			var content = document.getElementById('content');
+			if (content) {
+				content.innerHTML = msg.body;
+			}
 		} else if (msg.type === 'updateShowFloatingButton') {
 			bar.style.display = 'none';
 			bar.dataset.enabled = msg.enabled ? 'true' : 'false';
+		} else if (msg.type === 'updateSourceOpen') {
+			if (msg.open) {
+				toggleBtn.classList.add('active');
+			} else {
+				toggleBtn.classList.remove('active');
+			}
 		}
+	});
+
+	// ── Scroll sync (webview → host) ──
+
+	var scrollPreviewTimer = null;
+
+	window.addEventListener('scroll', function () {
+		if (scrollingFromSource) {
+			return;
+		}
+		if (scrollPreviewTimer) {
+			clearTimeout(scrollPreviewTimer);
+		}
+		scrollPreviewTimer = setTimeout(function () {
+			var all = document.querySelectorAll('[data-source-line]');
+			var best = null;
+			for (var i = 0; i < all.length; i++) {
+				var el = all[i];
+				var rect = el.getBoundingClientRect();
+				if (rect.top >= 0) {
+					best = el;
+					break;
+				}
+				best = el;
+			}
+			if (best) {
+				vscode.postMessage({
+					type: 'scrollFromPreview',
+					line: Number(best.dataset.sourceLine),
+				});
+			}
+		}, 50);
 	});
 })();

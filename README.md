@@ -1,14 +1,15 @@
 # ask-markdown
 
-A VS Code / Cursor extension that renders markdown files with LaTeX support. Select text in the preview, click a button, and send it to Claude Code or Codex CLI with the exact file and line reference.
+A VS Code / Cursor extension that renders markdown files with LaTeX support. Select text in the preview and send it to Claude Code with the exact file and line reference.
 
 ## Features
 
 - **Rendered preview** — `.md` files open in a rendered preview. Toggle back to source with the `</>` button.
 - **LaTeX** — Inline `$...$` and display `$$...$$` math via KaTeX.
-- **Selection action bar** — Select text to get a floating toolbar with Claude, Codex, and Find in source buttons.
+- **Syntax highlighting** — Fenced code blocks are highlighted using `highlight.js`, with colors that match your VS Code theme.
+- **Selection action bar** — Select text to get a floating toolbar with Claude and Find in source buttons.
 - **Click-to-jump** — Double-click any block to jump to its source line.
-- **Scroll sync** — Scrolling the source editor scrolls the preview.
+- **Bidirectional scroll sync** — Scrolling either the source editor or the preview keeps the other in sync.
 - **Theme-aware** — Follows your VS Code light/dark/high-contrast theme.
 
 ## Claude Code integration
@@ -46,32 +47,10 @@ Then run `/ide` and select Ask Markdown.
 
 This is not needed when running Claude Code from an external terminal (outside Cursor).
 
-## Codex CLI integration
-
-Codex CLI has no IDE server discovery, so ask-markdown uses **terminal text injection** instead — it pastes the file reference directly into the terminal.
-
-### How to use
-
-1. Open a terminal and run `codex`.
-2. Select text in the preview and click **Codex**. The terminal gets focus automatically.
-3. The `@file:line-line` mention appears in the terminal input. Type your question and press Enter.
-
-If multiple terminals are open, a quick pick lets you choose which one. If no terminal is open, a new one is created with `codex` launched and the mention is copied to your clipboard.
-
-## How the two integrations differ
-
-| | Claude Code | Codex CLI |
-|---|---|---|
-| Connection | WebSocket server (MCP protocol) | Terminal text injection |
-| Discovery | Lock file in `~/.claude/ide/` | None (pastes into terminal) |
-| Setup | Run `claude`, then `/ide` | Run `codex` in a terminal |
-| What happens on click | Broadcasts file reference over WebSocket | Pastes `@file:line` into terminal |
-
 ## Requirements
 
 - VS Code 1.85+ or Cursor
-- [Claude Code](https://docs.anthropic.com/en/docs/claude-code) for the Claude button
-- [Codex CLI](https://github.com/openai/codex) for the Codex button
+- [Claude Code](https://docs.anthropic.com/en/docs/claude-code) CLI
 
 ## Extension settings
 
@@ -80,5 +59,5 @@ If multiple terminals are open, a quick pick lets you choose which one. If no te
 
 ## Known issues
 
-- Codex with no open terminal: `codex` takes time to start, so the mention is copied to clipboard instead of pasted directly.
 - Inside Cursor's integrated terminal, Claude Code cannot discover Ask Markdown's server without the `TERM_PROGRAM` workaround described above.
+- KaTeX requires `unsafe-inline` in the style CSP directive due to its inline `style` attributes.

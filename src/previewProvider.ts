@@ -2,9 +2,9 @@ import * as vscode from 'vscode';
 import MarkdownIt from 'markdown-it';
 const texmath = require('markdown-it-texmath');
 const katex = require('katex');
+const hljs = require('highlight.js/lib/common');
 import { toRange } from './sourceMapper';
 import { broadcast, isConnected } from './claudeServer';
-import { sendToCodex } from './codexTerminal';
 
 type Token = Parameters<MarkdownIt['renderer']['render']>[0][number];
 
@@ -15,7 +15,24 @@ type Token = Parameters<MarkdownIt['renderer']['render']>[0][number];
  * source line range.
  */
 export function createMarkdownIt(): MarkdownIt {
-	const md = new MarkdownIt({ html: false, linkify: true, breaks: false });
+	const md = new MarkdownIt({
+		html: true,
+		linkify: true,
+		breaks: false,
+		highlight: (str: string, lang: string): string => {
+			if (lang && hljs.getLanguage(lang)) {
+				try {
+					return hljs.highlight(str, {
+						language: lang,
+						ignoreIllegals: true,
+					}).value;
+				} catch {
+					// fall through
+				}
+			}
+			return '';
+		},
+	});
 
 	md.use(texmath, { engine: katex, delimiters: 'dollars' });
 
@@ -30,7 +47,7 @@ export function createMarkdownIt(): MarkdownIt {
 		token.attrJoin('data-source-line-end', String(endLine));
 	};
 
-	const blockOpenTypes = [
+	const sourceMapTypes = [
 		'paragraph_open',
 		'heading_open',
 		'bullet_list_open',
@@ -39,19 +56,11 @@ export function createMarkdownIt(): MarkdownIt {
 		'blockquote_open',
 		'table_open',
 		'hr',
+		'fence',
+		'code_block',
 	];
 
-	for (const type of blockOpenTypes) {
-		const previous = md.renderer.rules[type];
-		md.renderer.rules[type] = (tokens, idx, options, env, self) => {
-			injectSourceMap(tokens, idx);
-			return previous
-				? previous(tokens, idx, options, env, self)
-				: self.renderToken(tokens, idx, options);
-		};
-	}
-
-	for (const type of ['fence', 'code_block'] as const) {
+	for (const type of sourceMapTypes) {
 		const previous = md.renderer.rules[type];
 		md.renderer.rules[type] = (tokens, idx, options, env, self) => {
 			injectSourceMap(tokens, idx);
@@ -132,6 +141,16 @@ function buildHtml(
 </html>`;
 }
 
+function isSourceOpen(uri: vscode.Uri): boolean {
+	return vscode.window.tabGroups.all.some((g) =>
+		g.tabs.some(
+			(t) =>
+				t.input instanceof vscode.TabInputText &&
+				t.input.uri.toString() === uri.toString(),
+		),
+	);
+}
+
 async function revealInSourceEditor(
 	document: vscode.TextDocument,
 	startLine: number,
@@ -202,16 +221,44 @@ export class AskMarkdownEditorProvider implements vscode.CustomTextEditorProvide
 
 		render();
 
+		// Send initial settings to the webview.
+		const initConfig = vscode.workspace.getConfiguration('ask-markdown');
+		webviewPanel.webview.postMessage({
+			type: 'updateShowFloatingButton',
+			enabled: initConfig.get<boolean>('showFloatingButton', true),
+		});
+		webviewPanel.webview.postMessage({
+			type: 'updateSourceOpen',
+			open: isSourceOpen(document.uri),
+		});
+
+		let updateTimer: ReturnType<typeof setTimeout> | null = null;
+
 		const changeSubscription = vscode.workspace.onDidChangeTextDocument(
 			(e) => {
 				if (e.document.uri.toString() === document.uri.toString()) {
-					render();
+					if (updateTimer) {
+						clearTimeout(updateTimer);
+					}
+					updateTimer = setTimeout(() => {
+						const body = md.render(document.getText());
+						webviewPanel.webview.postMessage({
+							type: 'updateContent',
+							body,
+						});
+					}, 150);
 				}
 			},
 		);
 
+		let scrollingFromPreview = false;
+		let scrollGuardTimer: ReturnType<typeof setTimeout> | null = null;
+
 		const scrollSubscription =
 			vscode.window.onDidChangeTextEditorVisibleRanges((e) => {
+				if (scrollingFromPreview) {
+					return;
+				}
 				if (
 					e.textEditor.document.uri.toString() ===
 						document.uri.toString() &&
@@ -278,11 +325,6 @@ export class AskMarkdownEditorProvider implements vscode.CustomTextEditorProvide
 						lineEnd: endLine,
 					});
 					vscode.commands.executeCommand('workbench.action.terminal.focus');
-				} else if (message.type === 'askCodex') {
-					const startLine = Number(message.startLine);
-					const endLine = Number(message.endLine);
-					sendToCodex(document.uri.fsPath, startLine, endLine);
-					vscode.commands.executeCommand('workbench.action.terminal.focus');
 				} else if (message.type === 'syncSelection') {
 					const startLine = Math.max(
 						0,
@@ -306,7 +348,84 @@ export class AskMarkdownEditorProvider implements vscode.CustomTextEditorProvide
 								.InCenterIfOutsideViewport,
 						);
 					}
+					if (isConnected()) {
+						const selectedText =
+							(message.text as string | undefined) ??
+							document.getText(range);
+						broadcast('selection_changed', {
+							text: selectedText,
+							filePath: document.uri.fsPath,
+							fileUrl: document.uri.toString(),
+							selection: {
+								start: {
+									line: range.start.line,
+									character: range.start.character,
+								},
+								end: {
+									line: range.end.line,
+									character: range.end.character,
+								},
+							},
+							isEmpty: false,
+						});
+					}
+				} else if (message.type === 'previewSelectionCleared') {
+					if (isConnected()) {
+						broadcast('selection_changed', {
+							text: '',
+							filePath: document.uri.fsPath,
+							fileUrl: document.uri.toString(),
+							selection: {
+								start: { line: 0, character: 0 },
+								end: { line: 0, character: 0 },
+							},
+							isEmpty: true,
+						});
+					}
+				} else if (message.type === 'scrollFromPreview') {
+					const line = Math.max(0, Number(message.line) - 1);
+					scrollingFromPreview = true;
+					if (scrollGuardTimer) {
+						clearTimeout(scrollGuardTimer);
+					}
+					scrollGuardTimer = setTimeout(() => {
+						scrollingFromPreview = false;
+					}, 100);
+					const editor = vscode.window.visibleTextEditors.find(
+						(e) =>
+							e.document.uri.toString() ===
+							document.uri.toString(),
+					);
+					if (editor) {
+						const pos = new vscode.Position(line, 0);
+						editor.revealRange(
+							new vscode.Range(pos, pos),
+							vscode.TextEditorRevealType.AtTop,
+						);
+					}
 				}
+			},
+		);
+
+		const configSubscription = vscode.workspace.onDidChangeConfiguration(
+			(e) => {
+				if (e.affectsConfiguration('ask-markdown.showFloatingButton')) {
+					const cfg =
+						vscode.workspace.getConfiguration('ask-markdown');
+					webviewPanel.webview.postMessage({
+						type: 'updateShowFloatingButton',
+						enabled: cfg.get<boolean>('showFloatingButton', true),
+					});
+				}
+			},
+		);
+
+		const tabSubscription = vscode.window.tabGroups.onDidChangeTabs(
+			() => {
+				webviewPanel.webview.postMessage({
+					type: 'updateSourceOpen',
+					open: isSourceOpen(document.uri),
+				});
 			},
 		);
 
@@ -314,6 +433,8 @@ export class AskMarkdownEditorProvider implements vscode.CustomTextEditorProvide
 			changeSubscription.dispose();
 			scrollSubscription.dispose();
 			messageSubscription.dispose();
+			configSubscription.dispose();
+			tabSubscription.dispose();
 		});
 	}
 }
