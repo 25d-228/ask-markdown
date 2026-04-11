@@ -11,6 +11,7 @@ src/**
 esbuild.js
 vsc-extension-quickstart.md
 claudecode-nvim-analysis.md
+opencode-codex-analysis.md
 **/tsconfig.json
 **/eslint.config.mjs
 **/*.map
