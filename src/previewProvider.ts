@@ -4,7 +4,7 @@ const texmath = require('markdown-it-texmath');
 const katex = require('katex');
 const hljs = require('highlight.js/lib/common');
 import { toRange } from './sourceMapper';
-import { broadcast, isConnected } from './claudeServer';
+import { broadcast, isConnected, updateLatestSelection } from './claudeServer';
 
 type Token = Parameters<MarkdownIt['renderer']['render']>[0][number];
 
@@ -348,26 +348,28 @@ export class AskMarkdownEditorProvider implements vscode.CustomTextEditorProvide
 								.InCenterIfOutsideViewport,
 						);
 					}
-					if (isConnected()) {
-						const selectedText =
-							(message.text as string | undefined) ??
-							document.getText(range);
-						broadcast('selection_changed', {
-							text: selectedText,
-							filePath: document.uri.fsPath,
-							fileUrl: document.uri.toString(),
-							selection: {
-								start: {
-									line: range.start.line,
-									character: range.start.character,
-								},
-								end: {
-									line: range.end.line,
-									character: range.end.character,
-								},
+					const selectedText =
+						(message.text as string | undefined) ??
+						document.getText(range);
+					const selectionPayload = {
+						text: selectedText,
+						filePath: document.uri.fsPath,
+						fileUrl: document.uri.toString(),
+						selection: {
+							start: {
+								line: range.start.line,
+								character: range.start.character,
+							},
+							end: {
+								line: range.end.line,
+								character: range.end.character,
 							},
 							isEmpty: false,
-						});
+						},
+					};
+					updateLatestSelection(selectionPayload);
+					if (isConnected()) {
+						broadcast('selection_changed', selectionPayload);
 					}
 				} else if (message.type === 'previewSelectionCleared') {
 					if (isConnected()) {
@@ -378,8 +380,8 @@ export class AskMarkdownEditorProvider implements vscode.CustomTextEditorProvide
 							selection: {
 								start: { line: 0, character: 0 },
 								end: { line: 0, character: 0 },
+								isEmpty: true,
 							},
-							isEmpty: true,
 						});
 					}
 				} else if (message.type === 'scrollFromPreview') {

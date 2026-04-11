@@ -24,10 +24,28 @@ interface JsonRpcRequest {
 	params?: Record<string, unknown>;
 }
 
+export interface LatestSelection {
+	text: string;
+	filePath: string;
+	fileUrl: string;
+	selection: {
+		start: { line: number; character: number };
+		end: { line: number; character: number };
+		isEmpty: boolean;
+	};
+}
+
 let wss: WebSocketServer | null = null;
 let serverPort: number | null = null;
 let authToken: string | null = null;
+let latestSelection: LatestSelection | null = null;
 const clients = new Set<WebSocket>();
+
+export function updateLatestSelection(sel: LatestSelection): void {
+	if (!sel.selection.isEmpty) {
+		latestSelection = sel;
+	}
+}
 
 function generateAuthToken(): string {
 	return crypto.randomUUID();
@@ -65,6 +83,8 @@ function removeLockFile(port: number): void {
 	}
 }
 
+const MARKDOWN_VIEW_TYPE = 'askMarkdown.preview';
+
 function handleToolsList(): unknown {
 	return {
 		tools: [
@@ -74,6 +94,30 @@ function handleToolsList(): unknown {
 				inputSchema: {
 					type: 'object',
 					properties: {},
+				},
+			},
+			{
+				name: 'getLatestSelection',
+				description:
+					'Get the most recently non-empty text selection. Use this to retrieve what the user last selected, even if focus has since moved elsewhere (e.g. to the terminal).',
+				inputSchema: {
+					type: 'object',
+					properties: {},
+				},
+			},
+			{
+				name: 'getDiagnostics',
+				description:
+					'Get language diagnostics from the editor. Returns an empty list for markdown.',
+				inputSchema: {
+					type: 'object',
+					properties: {
+						uri: {
+							type: 'string',
+							description:
+								'Optional file URI to filter diagnostics. If omitted, all diagnostics are returned.',
+						},
+					},
 				},
 			},
 			{
@@ -92,35 +136,364 @@ function handleToolsList(): unknown {
 					properties: {},
 				},
 			},
+			{
+				name: 'openFile',
+				description:
+					'Open a file in the editor. Markdown files open in the Ask Markdown rendered preview.',
+				inputSchema: {
+					type: 'object',
+					properties: {
+						filePath: {
+							type: 'string',
+							description: 'Absolute path to the file to open.',
+						},
+						startText: {
+							type: 'string',
+							description:
+								'If provided, select starting at the first match of this text.',
+						},
+						endText: {
+							type: 'string',
+							description:
+								'If provided, extend the selection to the end of the first match of this text after startText.',
+						},
+						makeFrontmost: {
+							type: 'boolean',
+							description:
+								'Focus the opened tab (default: true).',
+						},
+					},
+					required: ['filePath'],
+				},
+			},
+			{
+				name: 'openDiff',
+				description:
+					'Open a diff view between an existing file and proposed new contents. Blocks until the user saves (accept) or closes (reject) the diff.',
+				inputSchema: {
+					type: 'object',
+					properties: {
+						old_file_path: {
+							type: 'string',
+							description:
+								'Absolute path to the existing file.',
+						},
+						new_file_path: {
+							type: 'string',
+							description:
+								'Path the new contents should be written to (usually the same as old_file_path).',
+						},
+						new_file_contents: {
+							type: 'string',
+							description: 'Proposed new file contents.',
+						},
+						tab_name: {
+							type: 'string',
+							description: 'Title shown on the diff tab.',
+						},
+					},
+					required: ['old_file_path', 'new_file_contents'],
+				},
+			},
 		],
 	};
 }
 
-function handleToolCall(name: string): unknown {
-	if (name === 'getCurrentSelection') {
-		const editor = vscode.window.activeTextEditor;
-		if (!editor || editor.selection.isEmpty) {
+async function handleOpenFile(
+	args: Record<string, unknown> | undefined,
+): Promise<unknown> {
+	const filePath = args?.filePath as string | undefined;
+	if (!filePath) {
+		return {
+			content: [
+				{
+					type: 'text',
+					text: 'Error: filePath is required',
+				},
+			],
+			isError: true,
+		};
+	}
+
+	const uri = vscode.Uri.file(filePath);
+	const isMarkdown = /\.mdx?$/i.test(filePath);
+	const makeFrontmost = args?.makeFrontmost !== false;
+
+	try {
+		if (isMarkdown) {
+			await vscode.commands.executeCommand(
+				'vscode.openWith',
+				uri,
+				MARKDOWN_VIEW_TYPE,
+				makeFrontmost ? undefined : { preserveFocus: true },
+			);
+		} else {
+			await vscode.commands.executeCommand('vscode.open', uri, {
+				preserveFocus: !makeFrontmost,
+			});
+		}
+
+		const startText = args?.startText as string | undefined;
+		const endText = args?.endText as string | undefined;
+		if (startText && !isMarkdown) {
+			const editor = vscode.window.activeTextEditor;
+			if (
+				editor &&
+				editor.document.uri.toString() === uri.toString()
+			) {
+				const fullText = editor.document.getText();
+				const startOffset = fullText.indexOf(startText);
+				if (startOffset !== -1) {
+					let endOffset = startOffset + startText.length;
+					if (endText) {
+						const after = fullText.indexOf(endText, endOffset);
+						if (after !== -1) {
+							endOffset = after + endText.length;
+						}
+					}
+					const startPos = editor.document.positionAt(startOffset);
+					const endPos = editor.document.positionAt(endOffset);
+					editor.selection = new vscode.Selection(startPos, endPos);
+					editor.revealRange(
+						new vscode.Range(startPos, endPos),
+						vscode.TextEditorRevealType.InCenterIfOutsideViewport,
+					);
+				}
+			}
+		}
+
+		return {
+			content: [
+				{ type: 'text', text: `Opened file: ${filePath}` },
+			],
+		};
+	} catch (err) {
+		return {
+			content: [
+				{
+					type: 'text',
+					text: `Error opening file: ${(err as Error).message}`,
+				},
+			],
+			isError: true,
+		};
+	}
+}
+
+function sanitizeBasename(name: string): string {
+	return name.replace(/[^a-zA-Z0-9._-]/g, '_');
+}
+
+async function handleOpenDiff(
+	args: Record<string, unknown> | undefined,
+): Promise<unknown> {
+	const oldPath = args?.old_file_path as string | undefined;
+	const newPath = (args?.new_file_path as string | undefined) ?? oldPath;
+	const newContents = args?.new_file_contents as string | undefined;
+	const tabName = (args?.tab_name as string | undefined) ?? 'Claude Edit';
+
+	if (!oldPath || newContents === undefined) {
+		return {
+			content: [
+				{
+					type: 'text',
+					text: 'Error: old_file_path and new_file_contents are required',
+				},
+			],
+			isError: true,
+		};
+	}
+
+	// Ensure old file exists — create empty if missing so diff can open.
+	if (!fs.existsSync(oldPath)) {
+		try {
+			fs.mkdirSync(path.dirname(oldPath), { recursive: true });
+			fs.writeFileSync(oldPath, '', 'utf8');
+		} catch (err) {
 			return {
-				content: [{ type: 'text', text: '' }],
+				content: [
+					{
+						type: 'text',
+						text: `Error creating old file: ${(err as Error).message}`,
+					},
+				],
+				isError: true,
 			};
 		}
-		const text = editor.document.getText(editor.selection);
+	}
+
+	// Write proposed contents to a temp file so the right side is editable.
+	const basename = sanitizeBasename(path.basename(newPath ?? oldPath));
+	const tempPath = path.join(
+		os.tmpdir(),
+		`ask-markdown-diff-${Date.now()}-${basename}`,
+	);
+	try {
+		fs.writeFileSync(tempPath, newContents, 'utf8');
+	} catch (err) {
+		return {
+			content: [
+				{
+					type: 'text',
+					text: `Error writing temp file: ${(err as Error).message}`,
+				},
+			],
+			isError: true,
+		};
+	}
+
+	const leftUri = vscode.Uri.file(oldPath);
+	const rightUri = vscode.Uri.file(tempPath);
+
+	try {
+		await vscode.commands.executeCommand(
+			'vscode.diff',
+			leftUri,
+			rightUri,
+			tabName,
+		);
+	} catch (err) {
+		try {
+			fs.unlinkSync(tempPath);
+		} catch {
+			// ignore
+		}
+		return {
+			content: [
+				{
+					type: 'text',
+					text: `Error opening diff: ${(err as Error).message}`,
+				},
+			],
+			isError: true,
+		};
+	}
+
+	return new Promise<unknown>((resolve) => {
+		let resolved = false;
+		const disposables: vscode.Disposable[] = [];
+
+		const finish = (result: 'FILE_SAVED' | 'DIFF_REJECTED'): void => {
+			if (resolved) {
+				return;
+			}
+			resolved = true;
+			for (const d of disposables) {
+				d.dispose();
+			}
+			try {
+				fs.unlinkSync(tempPath);
+			} catch {
+				// ignore
+			}
+			resolve({
+				content: [{ type: 'text', text: result }],
+			});
+		};
+
+		disposables.push(
+			vscode.workspace.onDidSaveTextDocument((doc) => {
+				if (doc.uri.toString() === rightUri.toString()) {
+					try {
+						fs.writeFileSync(oldPath, doc.getText(), 'utf8');
+						finish('FILE_SAVED');
+					} catch {
+						finish('DIFF_REJECTED');
+					}
+				}
+			}),
+			vscode.window.tabGroups.onDidChangeTabs((e) => {
+				for (const tab of e.closed) {
+					const input = tab.input as
+						| { modified?: vscode.Uri }
+						| undefined;
+					if (
+						input?.modified &&
+						input.modified.toString() === rightUri.toString()
+					) {
+						finish('DIFF_REJECTED');
+						return;
+					}
+				}
+			}),
+		);
+	});
+}
+
+async function handleToolCall(
+	name: string,
+	args: Record<string, unknown> | undefined,
+): Promise<unknown> {
+	if (name === 'getCurrentSelection') {
+		const editor = vscode.window.activeTextEditor;
+		if (!editor) {
+			return {
+				content: [
+					{
+						type: 'text',
+						text: JSON.stringify({
+							success: false,
+							message: 'No active editor',
+						}),
+					},
+				],
+			};
+		}
+		const sel = editor.selection;
+		const text = editor.document.getText(sel);
 		const filePath = editor.document.uri.fsPath;
-		const startLine = editor.selection.start.line + 1;
-		const endLine = editor.selection.end.line + 1;
+		const fileUrl = editor.document.uri.toString();
 		return {
 			content: [
 				{
 					type: 'text',
 					text: JSON.stringify({
+						success: true,
 						text,
 						filePath,
-						startLine,
-						endLine,
+						fileUrl,
+						selection: {
+							start: {
+								line: sel.start.line,
+								character: sel.start.character,
+							},
+							end: {
+								line: sel.end.line,
+								character: sel.end.character,
+							},
+							isEmpty: sel.isEmpty,
+						},
 					}),
 				},
 			],
 		};
+	} else if (name === 'getLatestSelection') {
+		if (!latestSelection) {
+			return {
+				content: [
+					{
+						type: 'text',
+						text: JSON.stringify({
+							success: false,
+							message: 'No selection available',
+						}),
+					},
+				],
+			};
+		}
+		return {
+			content: [
+				{
+					type: 'text',
+					text: JSON.stringify({
+						success: true,
+						...latestSelection,
+					}),
+				},
+			],
+		};
+	} else if (name === 'getDiagnostics') {
+		return { content: [] };
 	} else if (name === 'getOpenEditors') {
 		const tabs = vscode.window.tabGroups.all.flatMap((g) =>
 			g.tabs
@@ -139,11 +512,15 @@ function handleToolCall(name: string): unknown {
 				{ type: 'text', text: JSON.stringify(getWorkspaceFolders()) },
 			],
 		};
+	} else if (name === 'openFile') {
+		return handleOpenFile(args);
+	} else if (name === 'openDiff') {
+		return handleOpenDiff(args);
 	}
 	return { error: { code: -32601, message: `Unknown tool: ${name}` } };
 }
 
-function handleMessage(ws: WebSocket, data: string): void {
+async function handleMessage(ws: WebSocket, data: string): Promise<void> {
 	let request: JsonRpcRequest;
 	try {
 		request = JSON.parse(data);
@@ -169,6 +546,14 @@ function handleMessage(ws: WebSocket, data: string): void {
 		ws.send(JSON.stringify(response));
 	} else if (request.method === 'notifications/initialized') {
 		// No response needed for notifications.
+	} else if (request.method === 'prompts/list') {
+		ws.send(
+			JSON.stringify({
+				jsonrpc: '2.0',
+				id: request.id,
+				result: { prompts: [] },
+			}),
+		);
 	} else if (request.method === 'tools/list') {
 		ws.send(
 			JSON.stringify({
@@ -181,7 +566,10 @@ function handleMessage(ws: WebSocket, data: string): void {
 		const params = request.params as
 			| { name: string; arguments?: Record<string, unknown> }
 			| undefined;
-		const result = handleToolCall(params?.name ?? '');
+		const result = await handleToolCall(
+			params?.name ?? '',
+			params?.arguments,
+		);
 		ws.send(
 			JSON.stringify({
 				jsonrpc: '2.0',
@@ -232,7 +620,7 @@ export function startServer(): Promise<number> {
 			clients.add(ws);
 			console.log('[ask-markdown] Claude CLI connected');
 			ws.on('message', (data) => {
-				handleMessage(ws, data.toString());
+				void handleMessage(ws, data.toString());
 			});
 			ws.on('close', () => {
 				clients.delete(ws);
@@ -273,6 +661,7 @@ export function stopServer(): void {
 	}
 	serverPort = null;
 	authToken = null;
+	latestSelection = null;
 }
 
 export function broadcast(method: string, params: unknown): boolean {
