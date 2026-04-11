@@ -301,7 +301,10 @@ export class AskMarkdownEditorProvider implements vscode.CustomTextEditorProvide
 							'vscode.openWith',
 							document.uri,
 							'default',
-							vscode.ViewColumn.Beside,
+							{
+								viewColumn: vscode.ViewColumn.Beside,
+								preserveFocus: true,
+							},
 						);
 					}
 				} else if (message.type === 'revealSource') {
