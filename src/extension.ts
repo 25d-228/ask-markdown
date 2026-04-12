@@ -467,22 +467,61 @@ export function activate(context: vscode.ExtensionContext) {
 		// Shown as "</>" in the editor title bar so the user can flip
 		// back and forth between rendered preview and source.
 		vscode.commands.registerCommand('ask-markdown.flipToPreview', async () => {
+			let uri: vscode.Uri | undefined;
+			let viewColumn = vscode.ViewColumn.Active;
+
+			// Try the active text editor first (plain source editing).
 			const editor = vscode.window.activeTextEditor;
-			if (!editor || editor.document.languageId !== 'markdown') {
+			if (editor?.document.languageId === 'markdown') {
+				uri = editor.document.uri;
+				viewColumn = editor.viewColumn ?? vscode.ViewColumn.Active;
+			} else {
+				// Fallback: read the URI from the active tab's input.
+				// Covers Cursor's built-in markdown editor which may
+				// not expose an activeTextEditor.
+				const activeTab =
+					vscode.window.tabGroups.activeTabGroup.activeTab;
+				if (activeTab) {
+					const info = readUriFromInput(activeTab.input);
+					if (info?.uri.path.toLowerCase().endsWith('.md')) {
+						// Don't flip if we're already in our own preview.
+						if (
+							info.viewType ===
+							AskMarkdownEditorProvider.viewType
+						) {
+							return;
+						}
+						uri = info.uri;
+					}
+				}
+			}
+
+			if (!uri) {
 				return;
 			}
-			const uri = editor.document.uri;
-			const viewColumn = editor.viewColumn ?? vscode.ViewColumn.Active;
 
-			// Locate the text tab before opening the preview — the tab
-			// list may change once the custom editor activates.
-			const textTab = vscode.window.tabGroups.all
+			// Locate the current tab before opening the preview — the
+			// tab list may change once the custom editor activates.
+			const currentTab = vscode.window.tabGroups.all
 				.flatMap((g) => g.tabs)
-				.find(
-					(t) =>
-						t.input instanceof vscode.TabInputText &&
-						t.input.uri.toString() === uri.toString(),
-				);
+				.find((t) => {
+					if (t.input instanceof vscode.TabInputText) {
+						return (
+							t.input.uri.toString() === uri!.toString()
+						);
+					}
+					const info = readUriFromInput(t.input);
+					if (!info) {
+						return false;
+					}
+					if (
+						info.viewType ===
+						AskMarkdownEditorProvider.viewType
+					) {
+						return false;
+					}
+					return info.uri.toString() === uri!.toString();
+				});
 
 			await vscode.commands.executeCommand(
 				'vscode.openWith',
@@ -491,9 +530,9 @@ export function activate(context: vscode.ExtensionContext) {
 				viewColumn,
 			);
 
-			if (textTab) {
+			if (currentTab) {
 				try {
-					await vscode.window.tabGroups.close(textTab);
+					await vscode.window.tabGroups.close(currentTab);
 				} catch {
 					// Tab may already have been replaced
 				}
