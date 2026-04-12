@@ -1,15 +1,195 @@
 // Runs inside the Ask Markdown webview.
-// Handles: text selection → extension host, floating action bar,
-// click-to-jump, and scroll sync from the host.
+// Handles: preview ↔ source toggle, syntax-highlighted editable source,
+// line numbers, text selection, floating action bar, click-to-jump,
+// scroll sync, and scroll history tracking.
 
 (function () {
-	const vscode = acquireVsCodeApi();
+	var vscode = acquireVsCodeApi();
+
+	// ── State ──
+
+	var mode = 'preview'; // 'preview' | 'source'
+	var rawSource = '';
+	var textareaEditing = false;
+	var textareaEditTimer = null;
+	var editTimer = null;
+
+	// Scroll history: remember last scrollTop for each view
+	var previewScrollTop = 0;
+	var sourceScrollTop = 0;
+
+	// ── DOM refs (pre-built in HTML) ──
+
+	var contentScroll = document.getElementById('content-scroll');
+	var contentEl = document.getElementById('content');
+	var sourceView = document.getElementById('source-view');
+	var lineNumbers = document.getElementById('line-numbers');
+	var sourceHighlight = document.getElementById('source-highlight');
+	var sourceTextarea = document.getElementById('source-editor');
+	var toolbar = document.getElementById('toolbar');
+	var editBtn = document.getElementById('edit-btn');
+	var toggleBtn = document.getElementById('toggle-source');
+	var bar = document.getElementById('ask-bar');
+	var findBtn = bar.querySelector('[data-action="find"]');
+
+	// ── Line numbers ──
+
+	function updateLineNumbers() {
+		var count = sourceTextarea.value.split('\n').length;
+		var digits = String(count).length;
+		var gutterWidth = (digits * 0.65 + 1.2) + 'em';
+		sourceView.style.setProperty('--gutter-width', gutterWidth);
+
+		var nums = '';
+		for (var i = 1; i <= count; i++) {
+			nums += i + '\n';
+		}
+		lineNumbers.textContent = nums;
+	}
+
+	function syncGutterScroll() {
+		lineNumbers.scrollTop = sourceTextarea.scrollTop;
+	}
+
+	// ── Syntax highlight rendering ──
+
+	function escapeHtml(str) {
+		return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+	}
+
+	function highlightLine(line) {
+		// Headings
+		if (/^#{1,6}\s/.test(line)) {
+			return '<span class="md-heading">' + escapeHtml(line) + '</span>';
+		}
+		// Horizontal rule
+		if (/^(\*\*\*|---|___)\s*$/.test(line)) {
+			return '<span class="md-hr">' + escapeHtml(line) + '</span>';
+		}
+		// Blockquote
+		if (/^>\s?/.test(line)) {
+			return '<span class="md-blockquote">' + escapeHtml(line) + '</span>';
+		}
+		// Unordered list bullet
+		if (/^\s*[-*+]\s/.test(line)) {
+			var m = line.match(/^(\s*[-*+]\s)/);
+			return '<span class="md-bullet">' + escapeHtml(m[1]) + '</span>' + highlightInline(line.substring(m[1].length));
+		}
+		// Ordered list
+		if (/^\s*\d+\.\s/.test(line)) {
+			var m2 = line.match(/^(\s*\d+\.\s)/);
+			return '<span class="md-bullet">' + escapeHtml(m2[1]) + '</span>' + highlightInline(line.substring(m2[1].length));
+		}
+		return highlightInline(line);
+	}
+
+	function highlightInline(text) {
+		var result = '';
+		var i = 0;
+		while (i < text.length) {
+			// Inline code
+			if (text[i] === '`') {
+				var end = text.indexOf('`', i + 1);
+				if (end !== -1) {
+					result += '<span class="md-inline-code">' + escapeHtml(text.substring(i, end + 1)) + '</span>';
+					i = end + 1;
+					continue;
+				}
+			}
+			// Image ![alt](url)
+			if (text[i] === '!' && text[i + 1] === '[') {
+				var closeBracket = text.indexOf(']', i + 2);
+				if (closeBracket !== -1 && text[closeBracket + 1] === '(') {
+					var closeParen = text.indexOf(')', closeBracket + 2);
+					if (closeParen !== -1) {
+						result += '<span class="md-image">' + escapeHtml(text.substring(i, closeParen + 1)) + '</span>';
+						i = closeParen + 1;
+						continue;
+					}
+				}
+			}
+			// Link [text](url)
+			if (text[i] === '[') {
+				var closeBracket2 = text.indexOf(']', i + 1);
+				if (closeBracket2 !== -1 && text[closeBracket2 + 1] === '(') {
+					var closeParen2 = text.indexOf(')', closeBracket2 + 2);
+					if (closeParen2 !== -1) {
+						result += '<span class="md-link">' + escapeHtml(text.substring(i, closeParen2 + 1)) + '</span>';
+						i = closeParen2 + 1;
+						continue;
+					}
+				}
+			}
+			// Bold **text** or __text__
+			if ((text[i] === '*' && text[i + 1] === '*') || (text[i] === '_' && text[i + 1] === '_')) {
+				var marker = text.substring(i, i + 2);
+				var end2 = text.indexOf(marker, i + 2);
+				if (end2 !== -1) {
+					result += '<span class="md-bold">' + escapeHtml(text.substring(i, end2 + 2)) + '</span>';
+					i = end2 + 2;
+					continue;
+				}
+			}
+			// Italic *text* or _text_ (single)
+			if ((text[i] === '*' || text[i] === '_') && i + 1 < text.length && text[i + 1] !== text[i]) {
+				var marker2 = text[i];
+				var end3 = text.indexOf(marker2, i + 1);
+				if (end3 !== -1 && end3 > i + 1) {
+					result += '<span class="md-italic">' + escapeHtml(text.substring(i, end3 + 1)) + '</span>';
+					i = end3 + 1;
+					continue;
+				}
+			}
+			result += escapeHtml(text[i]);
+			i++;
+		}
+		return result;
+	}
+
+	function renderHighlight(text) {
+		var lines = text.split('\n');
+		var html = '';
+		var inFence = false;
+
+		for (var i = 0; i < lines.length; i++) {
+			var line = lines[i];
+
+			if (/^```/.test(line)) {
+				if (!inFence) {
+					inFence = true;
+					html += '<span class="md-fence">' + escapeHtml(line) + '</span>';
+				} else {
+					inFence = false;
+					html += '<span class="md-fence">' + escapeHtml(line) + '</span>';
+				}
+			} else if (inFence) {
+				html += '<span class="md-code-content">' + escapeHtml(line) + '</span>';
+			} else {
+				html += highlightLine(line);
+			}
+
+			if (i < lines.length - 1) {
+				html += '\n';
+			}
+		}
+
+		// Must end with a newline so the highlight div matches the textarea height
+		if (text.length > 0 && text[text.length - 1] === '\n') {
+			html += '\n';
+		}
+
+		return html;
+	}
+
+	function updateHighlight() {
+		sourceHighlight.innerHTML = renderHighlight(sourceTextarea.value);
+	}
 
 	// ── Helpers ──
 
 	/** Walk up to the nearest element with `data-source-line`. */
 	function findSourceElement(node) {
-		let el = node;
+		var el = node;
 		if (el && el.nodeType !== 1) {
 			el = el.parentElement;
 		}
@@ -19,69 +199,332 @@
 		return el || null;
 	}
 
-	/** Compute {startLine, endLine} from the current selection endpoints. */
-	function selectionLineRange() {
-		const sel = window.getSelection();
+	/** Selection range from preview mode (DOM-based). */
+	function previewSelectionRange() {
+		var sel = window.getSelection();
 		if (!sel || sel.isCollapsed) {
 			return null;
 		}
-		const text = sel.toString();
+		var text = sel.toString();
 		if (!text.trim()) {
 			return null;
 		}
 
-		const startEl = findSourceElement(sel.anchorNode);
-		const endEl = findSourceElement(sel.focusNode);
+		var startEl = findSourceElement(sel.anchorNode);
+		var endEl = findSourceElement(sel.focusNode);
 		if (!startEl && !endEl) {
 			return null;
 		}
 
-		const a = startEl || endEl;
-		const b = endEl || startEl;
-
-		const aStart = Number(a.dataset.sourceLine);
-		const aEnd = Number(a.dataset.sourceLineEnd || a.dataset.sourceLine);
-		const bStart = Number(b.dataset.sourceLine);
-		const bEnd = Number(b.dataset.sourceLineEnd || b.dataset.sourceLine);
+		var a = startEl || endEl;
+		var b = endEl || startEl;
+		var aStart = Number(a.dataset.sourceLine);
+		var aEnd = Number(a.dataset.sourceLineEnd || a.dataset.sourceLine);
+		var bStart = Number(b.dataset.sourceLine);
+		var bEnd = Number(b.dataset.sourceLineEnd || b.dataset.sourceLine);
 
 		return {
-			text,
+			text: text,
 			startLine: Math.min(aStart, bStart),
 			endLine: Math.max(aEnd, bEnd),
 		};
 	}
 
-	// ── Toggle source button (fixed top-right) ──
+	/** Selection range from source mode (textarea-based). */
+	function sourceSelectionRange() {
+		var start = sourceTextarea.selectionStart;
+		var end = sourceTextarea.selectionEnd;
+		if (start === end) {
+			return null;
+		}
 
-	const toggleBtn = document.createElement('button');
-	toggleBtn.id = 'toggle-source';
-	toggleBtn.textContent = '</>';
-	toggleBtn.title = 'Show Source';
-	document.body.appendChild(toggleBtn);
+		var text = sourceTextarea.value;
+		var selected = text.substring(start, end);
+		if (!selected.trim()) {
+			return null;
+		}
+
+		var startLine = text.substring(0, start).split('\n').length;
+		var endLine = text.substring(0, end).split('\n').length;
+
+		return {
+			text: selected,
+			startLine: startLine,
+			endLine: endLine,
+		};
+	}
+
+	function selectionLineRange() {
+		return mode === 'source' ? sourceSelectionRange() : previewSelectionRange();
+	}
+
+	/** Select lines startLine..endLine in the textarea (no focus/scroll side-effects). */
+	function selectInTextarea(startLine, endLine) {
+		var text = sourceTextarea.value;
+		var lines = text.split('\n');
+		var startPos = 0;
+		for (var i = 0; i < Math.min(startLine - 1, lines.length); i++) {
+			startPos += lines[i].length + 1;
+		}
+		var endPos = startPos;
+		for (
+			var j = Math.max(0, startLine - 1);
+			j < Math.min(endLine, lines.length);
+			j++
+		) {
+			endPos += lines[j].length + 1;
+		}
+		if (endPos > startPos) {
+			endPos--; // exclude trailing newline
+		}
+		sourceTextarea.focus();
+		sourceTextarea.setSelectionRange(startPos, endPos);
+	}
+
+	/** Select matching elements in preview by line range. */
+	function selectInPreview(startLine, endLine) {
+		var all = contentEl.querySelectorAll('[data-source-line]');
+		var firstEl = null;
+		var lastEl = null;
+		for (var i = 0; i < all.length; i++) {
+			var elStart = Number(all[i].dataset.sourceLine);
+			var elEnd = Number(all[i].dataset.sourceLineEnd || elStart);
+			if (elStart <= endLine && elEnd >= startLine) {
+				if (!firstEl) {
+					firstEl = all[i];
+				}
+				lastEl = all[i];
+			}
+		}
+		if (!firstEl || !lastEl) {
+			return;
+		}
+		var range = document.createRange();
+		range.setStartBefore(firstEl);
+		range.setEndAfter(lastEl);
+		var sel = window.getSelection();
+		sel.removeAllRanges();
+		sel.addRange(range);
+	}
+
+	// ── Source editing ──
+
+	sourceTextarea.addEventListener('input', function () {
+		textareaEditing = true;
+		if (textareaEditTimer) {
+			clearTimeout(textareaEditTimer);
+		}
+		textareaEditTimer = setTimeout(function () {
+			textareaEditing = false;
+		}, 500);
+		rawSource = sourceTextarea.value;
+		updateHighlight();
+		updateLineNumbers();
+
+		if (editTimer) {
+			clearTimeout(editTimer);
+		}
+		editTimer = setTimeout(function () {
+			editTimer = null;
+			vscode.postMessage({ type: 'editSource', text: sourceTextarea.value });
+		}, 150);
+	});
+
+	// Sync scroll between textarea, highlight div, and line numbers
+	sourceTextarea.addEventListener('scroll', function () {
+		sourceHighlight.scrollTop = sourceTextarea.scrollTop;
+		sourceHighlight.scrollLeft = sourceTextarea.scrollLeft;
+		syncGutterScroll();
+	});
+
+	// Handle Tab key: insert tab character instead of moving focus.
+	sourceTextarea.addEventListener('keydown', function (e) {
+		if (e.key === 'Tab') {
+			e.preventDefault();
+			var start = sourceTextarea.selectionStart;
+			var end = sourceTextarea.selectionEnd;
+			var val = sourceTextarea.value;
+			sourceTextarea.value =
+				val.substring(0, start) + '\t' + val.substring(end);
+			sourceTextarea.selectionStart = sourceTextarea.selectionEnd =
+				start + 1;
+			sourceTextarea.dispatchEvent(new Event('input'));
+		}
+	});
+
+	// ── Smart scroll ──
+
+	function smartScroll(scrollContainer, targetTop) {
+		var current = scrollContainer.scrollTop;
+		var viewH = scrollContainer.clientHeight;
+		var distance = Math.abs(targetTop - current);
+
+		if (distance > viewH * 3) {
+			scrollContainer.scrollTop = targetTop;
+		} else {
+			scrollContainer.scrollTo({ top: targetTop, behavior: 'smooth' });
+		}
+	}
+
+	// ── Mode switching ──
+
+	function topVisibleLine() {
+		if (mode === 'source') {
+			var lh =
+				parseFloat(getComputedStyle(sourceTextarea).lineHeight) || 20;
+			return Math.floor(sourceTextarea.scrollTop / lh) + 1;
+		}
+		var all = contentEl.querySelectorAll('[data-source-line]');
+		var best = null;
+		for (var i = 0; i < all.length; i++) {
+			var rect = all[i].getBoundingClientRect();
+			if (rect.top >= 0) {
+				return Number(all[i].dataset.sourceLine);
+			}
+			best = Number(all[i].dataset.sourceLine);
+		}
+		return best;
+	}
+
+	function flushPendingEdit() {
+		if (editTimer) {
+			clearTimeout(editTimer);
+			editTimer = null;
+			vscode.postMessage({ type: 'editSource', text: sourceTextarea.value });
+		}
+	}
+
+	function scrollTextareaToLine(line, center) {
+		var lh =
+			parseFloat(getComputedStyle(sourceTextarea).lineHeight) || 20;
+		var targetTop = (line - 1) * lh;
+		if (center) {
+			targetTop -= sourceTextarea.clientHeight / 2;
+		}
+		targetTop = Math.max(0, targetTop);
+		smartScroll(sourceTextarea, targetTop);
+		// Sync after setting scrollTop (for instant jumps)
+		sourceHighlight.scrollTop = sourceTextarea.scrollTop;
+		syncGutterScroll();
+	}
+
+	function switchToSource(scrollToLine, center, selectRange) {
+		flushPendingEdit();
+		// Save current preview scroll position
+		previewScrollTop = contentScroll.scrollTop;
+
+		mode = 'source';
+		contentScroll.style.display = 'none';
+		sourceView.style.display = 'block';
+		sourceTextarea.value = rawSource;
+		updateHighlight();
+		updateLineNumbers();
+		toggleBtn.title = 'Show Preview';
+		toggleBtn.classList.add('active');
+		updateBarLabels();
+		hideBar();
+
+		if (scrollToLine) {
+			// Use requestAnimationFrame to ensure layout is computed
+			// after display:block, then select first, then scroll.
+			// The scroll MUST come after selection to override the
+			// browser's auto-scroll triggered by setSelectionRange/focus.
+			requestAnimationFrame(function () {
+				if (selectRange) {
+					selectInTextarea(selectRange.startLine, selectRange.endLine);
+				}
+				// Scroll after selection so we control final position
+				scrollTextareaToLine(scrollToLine, center);
+			});
+		} else {
+			// Restore saved scroll position
+			requestAnimationFrame(function () {
+				sourceTextarea.scrollTop = sourceScrollTop;
+				sourceHighlight.scrollTop = sourceScrollTop;
+				syncGutterScroll();
+			});
+		}
+	}
+
+	function switchToPreview(scrollToLine, center, selectRange) {
+		flushPendingEdit();
+		// Save current source scroll position
+		sourceScrollTop = sourceTextarea.scrollTop;
+
+		mode = 'preview';
+		sourceView.style.display = 'none';
+		contentScroll.style.display = 'block';
+		toggleBtn.title = 'Show Source';
+		toggleBtn.classList.remove('active');
+		updateBarLabels();
+		hideBar();
+
+		if (scrollToLine) {
+			requestAnimationFrame(function () {
+				var all = contentEl.querySelectorAll('[data-source-line]');
+				var best = null;
+				var bestDist = Infinity;
+				for (var i = 0; i < all.length; i++) {
+					var l = Number(all[i].dataset.sourceLine);
+					var dist = Math.abs(l - scrollToLine);
+					if (dist < bestDist) {
+						bestDist = dist;
+						best = all[i];
+					}
+				}
+				if (best) {
+					var elTop = best.offsetTop;
+					if (center) {
+						elTop -= contentScroll.clientHeight / 2;
+					}
+					smartScroll(contentScroll, Math.max(0, elTop));
+				}
+				if (selectRange) {
+					selectInPreview(selectRange.startLine, selectRange.endLine);
+				}
+			});
+		} else {
+			// Restore saved scroll position
+			requestAnimationFrame(function () {
+				contentScroll.scrollTop = previewScrollTop;
+			});
+		}
+	}
+
+	// ── Toolbar events ──
+
+	editBtn.addEventListener('click', function () {
+		flushPendingEdit();
+		vscode.postMessage({ type: 'openExternalEditor' });
+	});
 
 	toggleBtn.addEventListener('click', function () {
-		vscode.postMessage({ type: 'toggleSource' });
+		var line = topVisibleLine();
+		if (mode === 'preview') {
+			switchToSource(line, false);
+		} else {
+			switchToPreview(line, false);
+		}
 	});
 
 	// ── Floating action bar ──
 
-	const bar = document.createElement('div');
-	bar.id = 'ask-bar';
-	bar.innerHTML =
-		'<button data-action="claude">Claude</button>' +
-		'<span class="ask-bar-sep"></span>' +
-		'<button data-action="find">Find in source</button>';
-	document.body.appendChild(bar);
+	function updateBarLabels() {
+		findBtn.textContent =
+			mode === 'preview' ? 'Find in source' : 'Find in preview';
+	}
 
-	let currentRange = null;
+	var currentRange = null;
+	var lastMouseX = 0;
+	var lastMouseY = 0;
+
+	document.addEventListener('mousemove', function (e) {
+		lastMouseX = e.clientX;
+		lastMouseY = e.clientY;
+	});
 
 	function showBar() {
 		if (bar.dataset.enabled === 'false') {
-			return;
-		}
-		const sel = window.getSelection();
-		if (!sel || sel.isCollapsed || !sel.rangeCount) {
-			hideBar();
 			return;
 		}
 
@@ -91,7 +534,7 @@
 			return;
 		}
 
-		// Sync selection to the source editor (focus stays in webview).
+		// Sync selection to the extension host.
 		vscode.postMessage({
 			type: 'syncSelection',
 			text: currentRange.text,
@@ -99,10 +542,26 @@
 			endLine: currentRange.endLine,
 		});
 
-		const rect = sel.getRangeAt(0).getBoundingClientRect();
 		bar.style.display = 'block';
-		bar.style.left = Math.max(0, rect.left + (rect.width - bar.offsetWidth) / 2) + 'px';
-		bar.style.top = (rect.top + window.scrollY - bar.offsetHeight - 6) + 'px';
+
+		if (mode === 'source') {
+			bar.style.left =
+				Math.max(0, lastMouseX - bar.offsetWidth / 2) + 'px';
+			bar.style.top =
+				Math.max(0, lastMouseY - bar.offsetHeight - 10) + 'px';
+		} else {
+			var sel = window.getSelection();
+			if (!sel || !sel.rangeCount) {
+				hideBar();
+				return;
+			}
+			var rect = sel.getRangeAt(0).getBoundingClientRect();
+			bar.style.left =
+				Math.max(0, rect.left + (rect.width - bar.offsetWidth) / 2) +
+				'px';
+			bar.style.top =
+				rect.top - bar.offsetHeight - 6 + 'px';
+		}
 	}
 
 	function hideBar() {
@@ -114,11 +573,11 @@
 	}
 
 	bar.addEventListener('click', function (e) {
-		const btn = e.target.closest('button');
+		var btn = e.target.closest('button');
 		if (!btn || !currentRange) {
 			return;
 		}
-		const action = btn.dataset.action;
+		var action = btn.dataset.action;
 		if (action === 'claude') {
 			vscode.postMessage({
 				type: 'askClaude',
@@ -126,21 +585,30 @@
 				endLine: currentRange.endLine,
 			});
 		} else if (action === 'find') {
-			vscode.postMessage({
-				type: 'revealSource',
-				line: currentRange.startLine,
+			var sel = {
+				startLine: currentRange.startLine,
 				endLine: currentRange.endLine,
-			});
+			};
+			if (mode === 'preview') {
+				switchToSource(sel.startLine, true, sel);
+			} else {
+				switchToPreview(sel.startLine, true, sel);
+			}
 		}
 		hideBar();
 	});
 
-	// Show bar on selection with a small debounce.
-	let selTimer = null;
+	// ── Selection detection ──
+
+	var selTimer = null;
+
 	document.addEventListener('selectionchange', function () {
+		if (mode !== 'preview') {
+			return;
+		}
 		clearTimeout(selTimer);
 		selTimer = setTimeout(function () {
-			const sel = window.getSelection();
+			var sel = window.getSelection();
 			if (!sel || sel.isCollapsed) {
 				hideBar();
 			} else {
@@ -149,23 +617,53 @@
 		}, 200);
 	});
 
-	// Also fire on mouseup for snappier feedback.
 	document.addEventListener('mouseup', function (e) {
-		// Ignore clicks on the bar itself and toggle button.
-		if (bar.contains(e.target) || toggleBtn.contains(e.target)) {
+		if (bar.contains(e.target) || toolbar.contains(e.target)) {
 			return;
 		}
+		if (mode === 'preview') {
+			clearTimeout(selTimer);
+			setTimeout(showBar, 50);
+		}
+	});
+
+	sourceTextarea.addEventListener('select', function () {
+		clearTimeout(selTimer);
+		selTimer = setTimeout(showBar, 200);
+	});
+
+	sourceTextarea.addEventListener('mouseup', function () {
 		clearTimeout(selTimer);
 		setTimeout(showBar, 50);
+	});
+
+	sourceTextarea.addEventListener('keyup', function (e) {
+		if (e.shiftKey) {
+			clearTimeout(selTimer);
+			selTimer = setTimeout(showBar, 200);
+		} else if (
+			sourceTextarea.selectionStart === sourceTextarea.selectionEnd
+		) {
+			hideBar();
+		}
+	});
+
+	sourceTextarea.addEventListener('click', function () {
+		if (sourceTextarea.selectionStart === sourceTextarea.selectionEnd) {
+			hideBar();
+		}
 	});
 
 	// ── Double-click-to-jump ──
 
 	document.addEventListener('dblclick', function (e) {
-		if (bar.contains(e.target)) {
+		if (bar.contains(e.target) || toolbar.contains(e.target)) {
 			return;
 		}
-		const el = findSourceElement(e.target);
+		if (mode !== 'preview') {
+			return;
+		}
+		var el = findSourceElement(e.target);
 		if (!el) {
 			return;
 		}
@@ -178,81 +676,99 @@
 
 	// ── Scroll sync (host → webview) ──
 
-	var scrollingFromSource = false;
-	var scrollSourceTimer = null;
+	var scrollingFromHost = false;
+	var scrollHostTimer = null;
 
 	window.addEventListener('message', function (e) {
-		const msg = e.data;
+		var msg = e.data;
 		if (msg.type === 'scrollTo') {
-			scrollingFromSource = true;
-			if (scrollSourceTimer) {
-				clearTimeout(scrollSourceTimer);
+			scrollingFromHost = true;
+			if (scrollHostTimer) {
+				clearTimeout(scrollHostTimer);
 			}
-			scrollSourceTimer = setTimeout(function () {
-				scrollingFromSource = false;
+			scrollHostTimer = setTimeout(function () {
+				scrollingFromHost = false;
 			}, 300);
-			const line = msg.line;
-			const all = document.querySelectorAll('[data-source-line]');
-			let best = null;
-			let bestDist = Infinity;
-			for (let i = 0; i < all.length; i++) {
-				const el = all[i];
-				const l = Number(el.dataset.sourceLine);
-				const dist = Math.abs(l - line);
-				if (dist < bestDist) {
-					bestDist = dist;
-					best = el;
+			if (mode === 'preview') {
+				var all = contentEl.querySelectorAll('[data-source-line]');
+				var best = null;
+				var bestDist = Infinity;
+				for (var i = 0; i < all.length; i++) {
+					var l = Number(all[i].dataset.sourceLine);
+					var dist = Math.abs(l - msg.line);
+					if (dist < bestDist) {
+						bestDist = dist;
+						best = all[i];
+					}
 				}
-			}
-			if (best) {
-				best.scrollIntoView({ behavior: 'smooth', block: 'center' });
+				if (best) {
+					var elTop = best.offsetTop - contentScroll.clientHeight / 2;
+					contentScroll.scrollTo({ top: Math.max(0, elTop), behavior: 'smooth' });
+				}
+			} else {
+				scrollTextareaToLine(msg.line, true);
 			}
 		} else if (msg.type === 'updateContent') {
-			var content = document.getElementById('content');
-			if (content) {
-				content.innerHTML = msg.body;
+			contentEl.innerHTML = msg.body;
+		} else if (msg.type === 'updateSource') {
+			rawSource = msg.text;
+			if (mode === 'source' && !textareaEditing) {
+				var start = sourceTextarea.selectionStart;
+				var end = sourceTextarea.selectionEnd;
+				var scrollPos = sourceTextarea.scrollTop;
+				sourceTextarea.value = rawSource;
+				sourceTextarea.selectionStart = Math.min(
+					start,
+					rawSource.length
+				);
+				sourceTextarea.selectionEnd = Math.min(end, rawSource.length);
+				sourceTextarea.scrollTop = scrollPos;
+				updateHighlight();
+				updateLineNumbers();
+				sourceHighlight.scrollTop = scrollPos;
+				syncGutterScroll();
 			}
 		} else if (msg.type === 'updateShowFloatingButton') {
 			bar.style.display = 'none';
 			bar.dataset.enabled = msg.enabled ? 'true' : 'false';
-		} else if (msg.type === 'updateSourceOpen') {
-			if (msg.open) {
-				toggleBtn.classList.add('active');
-			} else {
-				toggleBtn.classList.remove('active');
-			}
 		}
 	});
 
 	// ── Scroll sync (webview → host) ──
 
-	var scrollPreviewTimer = null;
+	var scrollOutTimer = null;
 
-	window.addEventListener('scroll', function () {
-		if (scrollingFromSource) {
+	function emitScrollLine() {
+		if (scrollingFromHost) {
 			return;
 		}
-		if (scrollPreviewTimer) {
-			clearTimeout(scrollPreviewTimer);
+		if (scrollOutTimer) {
+			clearTimeout(scrollOutTimer);
 		}
-		scrollPreviewTimer = setTimeout(function () {
-			var all = document.querySelectorAll('[data-source-line]');
-			var best = null;
-			for (var i = 0; i < all.length; i++) {
-				var el = all[i];
-				var rect = el.getBoundingClientRect();
-				if (rect.top >= 0) {
-					best = el;
-					break;
+		scrollOutTimer = setTimeout(function () {
+			var line;
+			if (mode === 'source') {
+				var lh =
+					parseFloat(getComputedStyle(sourceTextarea).lineHeight) ||
+					20;
+				line = Math.floor(sourceTextarea.scrollTop / lh) + 1;
+			} else {
+				var all = contentEl.querySelectorAll('[data-source-line]');
+				var best = null;
+				for (var i = 0; i < all.length; i++) {
+					var rect = all[i].getBoundingClientRect();
+					if (rect.top >= 0) {
+						best = all[i];
+						break;
+					}
+					best = all[i];
 				}
-				best = el;
+				line = best ? Number(best.dataset.sourceLine) : 1;
 			}
-			if (best) {
-				vscode.postMessage({
-					type: 'scrollFromPreview',
-					line: Number(best.dataset.sourceLine),
-				});
-			}
+			vscode.postMessage({ type: 'scrollFromPreview', line: line });
 		}, 50);
-	});
+	}
+
+	contentScroll.addEventListener('scroll', emitScrollLine);
+	sourceTextarea.addEventListener('scroll', emitScrollLine);
 })();

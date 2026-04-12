@@ -4,7 +4,8 @@ A VS Code / Cursor extension that renders markdown files with LaTeX support. Sel
 
 ## Features
 
-- **Rendered preview** — `.md` files open in a rendered preview. Toggle back to source with the `</>` button.
+- **Rendered preview** — `.md` files open in a rendered preview. Click **Edit** to open in your default editor.
+- **Inline source editor** — The `</>` button toggles a syntax-highlighted, editable source view with line numbers. Edits sync back to the file in real time.
 - **LaTeX** — Inline `$...$` and display `$$...$$` math via KaTeX.
 - **Syntax highlighting** — Fenced code blocks are highlighted using `highlight.js`, with colors that match your VS Code theme.
 - **Selection action bar** — Select text to get a floating toolbar with Claude and Find in source buttons.

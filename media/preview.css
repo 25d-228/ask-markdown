@@ -9,6 +9,8 @@ html,
 body {
 	margin: 0;
 	padding: 0;
+	height: 100%;
+	overflow: hidden;
 	background: var(--vscode-editor-background);
 	color: var(--vscode-editor-foreground);
 	font-family: var(--vscode-font-family);
@@ -16,11 +18,34 @@ body {
 	line-height: 1.6;
 }
 
+/* ── App layout ── */
+
+#app {
+	display: flex;
+	flex-direction: column;
+	height: 100vh;
+}
+
+#view-container {
+	position: relative;
+	flex: 1;
+	min-height: 0;
+}
+
+#content-scroll {
+	position: absolute;
+	inset: 0;
+	overflow-y: auto;
+	overflow-x: hidden;
+}
+
 #content {
 	max-width: 48rem;
 	margin: 0 auto;
-	padding: 1.5rem 2rem 4rem;
+	padding: 0.5rem 2rem 4rem;
 }
+
+/* ── Typography ── */
 
 h1, h2, h3, h4, h5, h6 {
 	color: var(--vscode-editor-foreground);
@@ -116,17 +141,21 @@ img {
 }
 
 ::selection {
-	background: var(--vscode-editor-selectionBackground);
-	color: var(--vscode-editor-selectionForeground, inherit);
+	background: rgba(56, 139, 253, 0.4);
+	color: inherit;
 }
 
-/* ── Toggle source button ── */
+/* ── Toolbar (Edit + </>) ── */
 
-#toggle-source {
-	position: fixed;
-	top: 8px;
-	right: 8px;
-	z-index: 99;
+#toolbar {
+	display: flex;
+	justify-content: flex-end;
+	gap: 4px;
+	padding: 6px 8px;
+	flex-shrink: 0;
+}
+
+#toolbar button {
 	background: var(--vscode-editorWidget-background, #252526);
 	border: 1px solid var(--vscode-editorWidget-border, var(--vscode-panel-border));
 	color: var(--vscode-editor-foreground);
@@ -136,10 +165,20 @@ img {
 	font-family: var(--vscode-editor-font-family);
 	font-size: 0.85em;
 	opacity: 0.6;
-	transition: opacity 0.15s;
+	transition: opacity 0.15s, background 0.15s, border-color 0.15s, color 0.15s;
+}
+
+#edit-btn:hover {
+	background: #2ea043;
+	border-color: #2ea043;
+	color: #fff;
+	opacity: 1;
 }
 
 #toggle-source:hover {
+	background: #388bfd;
+	border-color: #388bfd;
+	color: #fff;
 	opacity: 1;
 }
 
@@ -150,11 +189,93 @@ img {
 	opacity: 1;
 }
 
+#toggle-source.active:hover {
+	background: #388bfd;
+	border-color: #388bfd;
+}
+
+/* ── Source editor (overlay: highlight div + transparent textarea) ── */
+
+#source-view {
+	--gutter-width: 3em;
+	position: absolute;
+	inset: 0;
+}
+
+#line-numbers {
+	position: absolute;
+	top: 0;
+	left: 0;
+	width: var(--gutter-width);
+	height: 100%;
+	padding: 0.75rem 0.5em 0.75rem 0;
+	text-align: right;
+	color: var(--vscode-editorLineNumber-foreground, rgba(127, 127, 127, 0.5));
+	font-family: var(--vscode-editor-font-family);
+	font-size: var(--vscode-editor-font-size, 13px);
+	line-height: 1.5;
+	white-space: pre;
+	pointer-events: none;
+	overflow: hidden;
+	user-select: none;
+	z-index: 2;
+	box-sizing: border-box;
+	border-right: 1px solid var(--vscode-editorLineNumber-foreground, rgba(127, 127, 127, 0.15));
+}
+
+#source-highlight,
+#source-editor {
+	position: absolute;
+	top: 0;
+	left: var(--gutter-width);
+	width: calc(100% - var(--gutter-width));
+	height: 100%;
+	margin: 0;
+	border: none;
+	outline: none;
+	font-family: var(--vscode-editor-font-family);
+	font-size: var(--vscode-editor-font-size, 13px);
+	line-height: 1.5;
+	padding: 0.75rem 1.5em;
+	tab-size: 4;
+	white-space: pre;
+	box-sizing: border-box;
+}
+
+#source-highlight {
+	pointer-events: none;
+	overflow-y: auto;
+	background: var(--vscode-editor-background);
+	color: var(--vscode-editor-foreground);
+	/* Hide scrollbar so only the textarea scrollbar shows */
+	scrollbar-width: none;
+	-ms-overflow-style: none;
+}
+
+#source-highlight::-webkit-scrollbar {
+	display: none;
+}
+
+#source-editor {
+	display: block;
+	resize: none;
+	background: transparent;
+	color: transparent;
+	caret-color: var(--vscode-editorCursor-foreground, #aeafad);
+	overflow-y: auto;
+	z-index: 1;
+}
+
+#source-editor::selection {
+	color: transparent;
+	background: rgba(56, 139, 253, 0.4);
+}
+
 /* ── Floating action bar ── */
 
 #ask-bar {
 	display: none;
-	position: absolute;
+	position: fixed;
 	z-index: 100;
 	background: var(--vscode-editorWidget-background, #252526);
 	border: 1px solid var(--vscode-editorWidget-border, var(--vscode-panel-border));
@@ -196,11 +317,35 @@ img {
 	cursor: default;
 }
 
-[data-source-line]:hover {
+#content [data-source-line]:hover {
 	outline: 1px dashed var(--vscode-editor-selectionBackground, rgba(127, 127, 127, 0.25));
 	outline-offset: 2px;
 	border-radius: 2px;
 }
+
+/* ── Syntax highlighting – source overlay ── */
+
+.md-heading   { color: #569cd6; font-weight: bold; }
+.md-fence     { color: #808080; }
+.md-code-content { color: #ce9178; }
+.md-inline-code  { color: #ce9178; background: rgba(127,127,127,0.12); border-radius: 3px; padding: 0 2px; }
+.md-link      { color: #4ec9b0; }
+.md-image     { color: #4ec9b0; }
+.md-blockquote { color: #6a9955; }
+.md-bullet    { color: #d7ba7d; }
+.md-hr        { color: #808080; }
+.md-bold      { font-weight: bold; }
+.md-italic    { font-style: italic; }
+
+body.vscode-light .md-heading      { color: #0000ff; }
+body.vscode-light .md-fence        { color: #808080; }
+body.vscode-light .md-code-content { color: #a31515; }
+body.vscode-light .md-inline-code  { color: #a31515; }
+body.vscode-light .md-link         { color: #267f99; }
+body.vscode-light .md-image        { color: #267f99; }
+body.vscode-light .md-blockquote   { color: #008000; }
+body.vscode-light .md-bullet       { color: #795e26; }
+body.vscode-light .md-hr           { color: #808080; }
 
 /* ── Syntax highlighting (highlight.js) ── */
 

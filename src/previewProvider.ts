@@ -135,7 +135,27 @@ function buildHtml(
 	<title>Ask Markdown Preview</title>
 </head>
 <body>
-	<article id="content">${renderedBody}</article>
+	<div id="app">
+		<div id="toolbar">
+			<button id="edit-btn" title="Open in external editor">Edit</button>
+			<button id="toggle-source" title="Show Source">&lt;/&gt;</button>
+		</div>
+		<div id="view-container">
+			<div id="content-scroll">
+				<article id="content">${renderedBody}</article>
+			</div>
+			<div id="source-view" style="display:none">
+				<div id="line-numbers" aria-hidden="true"></div>
+				<div id="source-highlight" aria-hidden="true"></div>
+				<textarea id="source-editor" spellcheck="false" autocapitalize="off" autocomplete="off" wrap="off"></textarea>
+			</div>
+		</div>
+	</div>
+	<div id="ask-bar">
+		<button data-action="claude">Claude</button>
+		<span class="ask-bar-sep"></span>
+		<button data-action="find">Find in source</button>
+	</div>
 	<script nonce="${nonce}" src="${jsUri}"></script>
 </body>
 </html>`;
@@ -217,6 +237,10 @@ export class AskMarkdownEditorProvider implements vscode.CustomTextEditorProvide
 			type: 'updateShowFloatingButton',
 			enabled: initConfig.get<boolean>('showFloatingButton', true),
 		});
+		webviewPanel.webview.postMessage({
+			type: 'updateSource',
+			text: document.getText(),
+		});
 		let updateTimer: ReturnType<typeof setTimeout> | null = null;
 
 		const changeSubscription = vscode.workspace.onDidChangeTextDocument(
@@ -226,10 +250,15 @@ export class AskMarkdownEditorProvider implements vscode.CustomTextEditorProvide
 						clearTimeout(updateTimer);
 					}
 					updateTimer = setTimeout(() => {
-						const body = md.render(document.getText());
+						const text = document.getText();
+						const body = md.render(text);
 						webviewPanel.webview.postMessage({
 							type: 'updateContent',
 							body,
+						});
+						webviewPanel.webview.postMessage({
+							type: 'updateSource',
+							text,
 						});
 					}, 150);
 				}
@@ -259,19 +288,7 @@ export class AskMarkdownEditorProvider implements vscode.CustomTextEditorProvide
 
 		const messageSubscription = webviewPanel.webview.onDidReceiveMessage(
 			async (message: { type: string; [key: string]: unknown }) => {
-				if (message.type === 'toggleSource') {
-					// Flip in-place: open the text editor in the same
-					// column, then dispose the preview panel so the
-					// switch feels like turning a card over.
-					const viewColumn =
-						webviewPanel.viewColumn ??
-						vscode.ViewColumn.Active;
-					await vscode.window.showTextDocument(document, {
-						viewColumn,
-						preserveFocus: false,
-					});
-					webviewPanel.dispose();
-				} else if (message.type === 'revealSource') {
+				if (message.type === 'revealSource') {
 					const startLine = Math.max(0, Number(message.line) - 1);
 					const endLine = message.endLine
 						? Math.max(0, Number(message.endLine) - 1)
@@ -371,6 +388,44 @@ export class AskMarkdownEditorProvider implements vscode.CustomTextEditorProvide
 							new vscode.Range(pos, pos),
 							vscode.TextEditorRevealType.AtTop,
 						);
+					}
+				} else if (message.type === 'editSource') {
+					const newText = message.text as string;
+					const fullRange = new vscode.Range(
+						document.positionAt(0),
+						document.positionAt(document.getText().length),
+					);
+					const edit = new vscode.WorkspaceEdit();
+					edit.replace(document.uri, fullRange, newText);
+					await vscode.workspace.applyEdit(edit);
+				} else if (message.type === 'openExternalEditor') {
+					const viewColumn =
+						webviewPanel.viewColumn ??
+						vscode.ViewColumn.Active;
+					let opened = false;
+					try {
+						await vscode.commands.executeCommand(
+							'vscode.openWith',
+							document.uri,
+							'vscode.markdown.preview.editor',
+							viewColumn,
+						);
+						opened = true;
+					} catch {
+						// Markdown editor not available
+					}
+					if (!opened) {
+						await vscode.commands.executeCommand(
+							'vscode.openWith',
+							document.uri,
+							'default',
+							viewColumn,
+						);
+					}
+					try {
+						webviewPanel.dispose();
+					} catch {
+						// Already disposed by editor replacement
 					}
 				}
 			},
