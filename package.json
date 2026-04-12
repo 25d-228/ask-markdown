@@ -45,7 +45,7 @@
       "editor/title": [
         {
           "command": "ask-markdown.flipToPreview",
-          "when": "resourceExtname == .md && activeCustomEditorId != askMarkdown.preview",
+          "when": "resourceExtname == .md",
           "group": "navigation"
         }
       ],

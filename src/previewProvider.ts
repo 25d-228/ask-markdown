@@ -266,12 +266,10 @@ export class AskMarkdownEditorProvider implements vscode.CustomTextEditorProvide
 					const viewColumn =
 						webviewPanel.viewColumn ??
 						vscode.ViewColumn.Active;
-					await vscode.commands.executeCommand(
-						'vscode.openWith',
-						document.uri,
-						'default',
+					await vscode.window.showTextDocument(document, {
 						viewColumn,
-					);
+						preserveFocus: false,
+					});
 					webviewPanel.dispose();
 				} else if (message.type === 'revealSource') {
 					const startLine = Math.max(0, Number(message.line) - 1);
