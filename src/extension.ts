@@ -383,6 +383,43 @@ export function activate(context: vscode.ExtensionContext) {
 				}
 			}
 		}),
+
+		// Flip a text editor back to the Ask Markdown preview in-place.
+		// Shown as "</>" in the editor title bar so the user can flip
+		// back and forth between rendered preview and source.
+		vscode.commands.registerCommand('ask-markdown.flipToPreview', async () => {
+			const editor = vscode.window.activeTextEditor;
+			if (!editor || editor.document.languageId !== 'markdown') {
+				return;
+			}
+			const uri = editor.document.uri;
+			const viewColumn = editor.viewColumn ?? vscode.ViewColumn.Active;
+
+			// Locate the text tab before opening the preview — the tab
+			// list may change once the custom editor activates.
+			const textTab = vscode.window.tabGroups.all
+				.flatMap((g) => g.tabs)
+				.find(
+					(t) =>
+						t.input instanceof vscode.TabInputText &&
+						t.input.uri.toString() === uri.toString(),
+				);
+
+			await vscode.commands.executeCommand(
+				'vscode.openWith',
+				uri,
+				AskMarkdownEditorProvider.viewType,
+				viewColumn,
+			);
+
+			if (textTab) {
+				try {
+					await vscode.window.tabGroups.close(textTab);
+				} catch {
+					// Tab may already have been replaced
+				}
+			}
+		}),
 	);
 
 	// When defaultEditor is enabled, auto-open .md files in our preview.

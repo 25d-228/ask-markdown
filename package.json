@@ -34,14 +34,25 @@
         "command": "ask-markdown.showPreview",
         "title": "Ask Markdown: Show Preview",
         "icon": "$(open-preview)"
+      },
+      {
+        "command": "ask-markdown.flipToPreview",
+        "title": "</>",
+        "icon": "$(open-preview)"
       }
     ],
     "menus": {
       "editor/title": [
         {
-          "command": "ask-markdown.showPreview",
+          "command": "ask-markdown.flipToPreview",
           "when": "resourceExtname == .md && activeCustomEditorId != askMarkdown.preview",
           "group": "navigation"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "ask-markdown.flipToPreview",
+          "when": "false"
         }
       ]
     },

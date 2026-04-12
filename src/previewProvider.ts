@@ -141,16 +141,6 @@ function buildHtml(
 </html>`;
 }
 
-function isSourceOpen(uri: vscode.Uri): boolean {
-	return vscode.window.tabGroups.all.some((g) =>
-		g.tabs.some(
-			(t) =>
-				t.input instanceof vscode.TabInputText &&
-				t.input.uri.toString() === uri.toString(),
-		),
-	);
-}
-
 async function revealInSourceEditor(
 	document: vscode.TextDocument,
 	startLine: number,
@@ -227,11 +217,6 @@ export class AskMarkdownEditorProvider implements vscode.CustomTextEditorProvide
 			type: 'updateShowFloatingButton',
 			enabled: initConfig.get<boolean>('showFloatingButton', true),
 		});
-		webviewPanel.webview.postMessage({
-			type: 'updateSourceOpen',
-			open: isSourceOpen(document.uri),
-		});
-
 		let updateTimer: ReturnType<typeof setTimeout> | null = null;
 
 		const changeSubscription = vscode.workspace.onDidChangeTextDocument(
@@ -275,38 +260,19 @@ export class AskMarkdownEditorProvider implements vscode.CustomTextEditorProvide
 		const messageSubscription = webviewPanel.webview.onDidReceiveMessage(
 			async (message: { type: string; [key: string]: unknown }) => {
 				if (message.type === 'toggleSource') {
-					const isOpen = vscode.window.tabGroups.all.some((g) =>
-						g.tabs.some(
-							(t) =>
-								t.input instanceof vscode.TabInputText &&
-								t.input.uri.toString() ===
-									document.uri.toString(),
-						),
+					// Flip in-place: open the text editor in the same
+					// column, then dispose the preview panel so the
+					// switch feels like turning a card over.
+					const viewColumn =
+						webviewPanel.viewColumn ??
+						vscode.ViewColumn.Active;
+					await vscode.commands.executeCommand(
+						'vscode.openWith',
+						document.uri,
+						'default',
+						viewColumn,
 					);
-					if (isOpen) {
-						for (const group of vscode.window.tabGroups.all) {
-							for (const tab of group.tabs) {
-								if (
-									tab.input instanceof
-										vscode.TabInputText &&
-									tab.input.uri.toString() ===
-										document.uri.toString()
-								) {
-									await vscode.window.tabGroups.close(tab);
-								}
-							}
-						}
-					} else {
-						await vscode.commands.executeCommand(
-							'vscode.openWith',
-							document.uri,
-							'default',
-							{
-								viewColumn: vscode.ViewColumn.Beside,
-								preserveFocus: true,
-							},
-						);
-					}
+					webviewPanel.dispose();
 				} else if (message.type === 'revealSource') {
 					const startLine = Math.max(0, Number(message.line) - 1);
 					const endLine = message.endLine
@@ -425,21 +391,11 @@ export class AskMarkdownEditorProvider implements vscode.CustomTextEditorProvide
 			},
 		);
 
-		const tabSubscription = vscode.window.tabGroups.onDidChangeTabs(
-			() => {
-				webviewPanel.webview.postMessage({
-					type: 'updateSourceOpen',
-					open: isSourceOpen(document.uri),
-				});
-			},
-		);
-
 		webviewPanel.onDidDispose(() => {
 			changeSubscription.dispose();
 			scrollSubscription.dispose();
 			messageSubscription.dispose();
 			configSubscription.dispose();
-			tabSubscription.dispose();
 		});
 	}
 }
