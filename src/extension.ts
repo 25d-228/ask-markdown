@@ -301,6 +301,84 @@ export function activate(context: vscode.ExtensionContext) {
 		return picked?.target;
 	};
 
+	// Parse each workspace folder's .gitignore and return the set of bare
+	// directory names it ignores (e.g. "dist", "out", ".next"). We only
+	// handle simple folder entries: no globs, no negations, no nested
+	// paths. That covers the common build/cache dirs users want skipped in
+	// the "pick any .md in the workspace" fallback without committing to a
+	// full gitignore parser.
+	const readGitignoreFolders = async (): Promise<string[]> => {
+		const folders = new Set<string>();
+		for (const ws of vscode.workspace.workspaceFolders ?? []) {
+			let content: string;
+			try {
+				const bytes = await vscode.workspace.fs.readFile(
+					vscode.Uri.joinPath(ws.uri, '.gitignore'),
+				);
+				content = new TextDecoder().decode(bytes);
+			} catch {
+				continue;
+			}
+			for (const rawLine of content.split(/\r?\n/)) {
+				const line = rawLine.trim();
+				if (!line || line.startsWith('#') || line.startsWith('!')) {
+					continue;
+				}
+				const stripped = line
+					.replace(/^\/+/, '')
+					.replace(/\/+$/, '');
+				if (!stripped || !/^[a-zA-Z0-9._+-]+$/.test(stripped)) {
+					continue;
+				}
+				folders.add(stripped);
+			}
+		}
+		return Array.from(folders);
+	};
+
+	// Search the entire workspace for .md files and let the user pick one.
+	// Used as a fallback when no markdown tab is open and no markdown editor
+	// is active — so running the command from a scratch workspace still has
+	// a way to reach a file.
+	const pickMarkdownFromWorkspace = async (): Promise<
+		MarkdownTarget | undefined
+	> => {
+		const excludeNames = new Set<string>([
+			'node_modules',
+			...(await readGitignoreFolders()),
+		]);
+		const excludePattern =
+			excludeNames.size === 1
+				? `**/${[...excludeNames][0]}/**`
+				: `**/{${[...excludeNames].join(',')}}/**`;
+		const files = await vscode.workspace.findFiles(
+			'**/*.md',
+			excludePattern,
+		);
+		if (files.length === 0) {
+			return undefined;
+		}
+		const items = files
+			.map((uri) => ({
+				label: uri.path.split('/').pop() ?? uri.path,
+				description: vscode.workspace.asRelativePath(uri, false),
+				uri,
+			}))
+			.sort((a, b) => a.description.localeCompare(b.description));
+		const picked = await vscode.window.showQuickPick(items, {
+			placeHolder: 'Select a markdown file from the workspace',
+			matchOnDescription: true,
+		});
+		if (!picked) {
+			return undefined;
+		}
+		return {
+			uri: picked.uri,
+			tabRefs: [],
+			sources: ['source'],
+		};
+	};
+
 	const resolveTargetMarkdown = async (): Promise<
 		MarkdownTarget | undefined
 	> => {
@@ -309,7 +387,8 @@ export function activate(context: vscode.ExtensionContext) {
 
 		// No visible markdown tabs at all — fall back to the active text
 		// editor only if it's markdown. No stale "last opened" memory:
-		// closing a tab should forget it.
+		// closing a tab should forget it. If nothing in the editor either,
+		// offer every .md in the workspace.
 		if (targets.length === 0) {
 			if (active?.document.languageId === 'markdown') {
 				return {
@@ -318,7 +397,7 @@ export function activate(context: vscode.ExtensionContext) {
 					sources: ['source'],
 				};
 			}
-			return undefined;
+			return pickMarkdownFromWorkspace();
 		}
 
 		if (targets.length === 1) {
