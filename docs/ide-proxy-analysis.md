@@ -1,6 +1,6 @@
 # Claude Code IDE Proxy — Unified Cursor + Ask Markdown
 
-Analysis of merging Cursor's and Ask Markdown's IDE integrations into a single server that Claude Code connects to, so the user doesn't have to choose between them.
+How to merge Cursor's and Ask Markdown's IDE integrations into one server for Claude Code.
 
 Based on probing the live WebSocket servers on this machine (Cursor port 22663, Ask Markdown port 52353, both for the `ask-markdown` workspace) and the discovery protocol documented in `claudecode-nvim-analysis.md`.
 

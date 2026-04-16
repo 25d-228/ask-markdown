@@ -4,7 +4,10 @@
 
 ask-markdown is a VS Code / Cursor extension that opens `.md` files in a rendered custom editor with LaTeX support, syntax-highlighted code blocks, and a toggleable inline source editor. Users can select text in the rendered preview, and a floating action bar appears with buttons to send the selection to Claude Code or jump to the corresponding source lines. The extension runs a local MCP WebSocket server that Claude Code CLI connects to, and it **proactively broadcasts the current selection** to Claude Code whenever it changes — so when the user Tab-switches to their `claude` terminal and asks "explain this", Claude already knows exactly which passage they're looking at. It is the founding member of the "ask-*" extension family, with ask-svg and ask-pdf following the same architecture and UX patterns.
 
-A key design choice: markdown files are already text, so unlike ask-pdf there is no sidecar needed — Claude Code can read the file directly. Every MCP message references the real `.md` file path with real line numbers derived from `data-source-line` / `data-source-line-end` attributes that the extension injects into the rendered HTML via markdown-it render rule overrides. The inline source editor lets users edit the raw markdown without leaving the extension tab, with changes syncing back to the file in real time.
+
+
+Markdown files are already text, so Claude Code can read them directly — no sidecar is needed. Every MCP message references the real `.md` file path with line numbers derived from `data-source-line` attributes injected into the rendered HTML. An inline editor lets users edit the raw markdown without leaving the extension tab, with changes syncing back in real time.
+
 
 ## Repository layout
 
