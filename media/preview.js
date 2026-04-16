@@ -924,26 +924,6 @@
 		}
 	});
 
-	// ── Double-click-to-jump ──
-
-	document.addEventListener('dblclick', function (e) {
-		if (bar.contains(e.target) || toolbar.contains(e.target)) {
-			return;
-		}
-		if (mode !== 'preview') {
-			return;
-		}
-		var el = findSourceElement(e.target);
-		if (!el) {
-			return;
-		}
-		vscode.postMessage({
-			type: 'revealSource',
-			line: Number(el.dataset.sourceLine),
-			endLine: Number(el.dataset.sourceLineEnd || el.dataset.sourceLine),
-		});
-	});
-
 	// ── Scroll sync (host → webview) ──
 
 	var scrollingFromHost = false;
