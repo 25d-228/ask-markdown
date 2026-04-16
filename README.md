@@ -8,8 +8,8 @@ A VS Code / Cursor extension that renders markdown files with LaTeX support. Sel
 - **Inline source editor** — The `</>` button toggles a syntax-highlighted, editable source view with line numbers. Edits sync back to the file in real time.
 - **LaTeX** — Inline `$...$` and display `$$...$$` math via KaTeX.
 - **Syntax highlighting** — Fenced code blocks are highlighted using `highlight.js`, with colors that match your VS Code theme.
-- **Selection action bar** — Select text to get a floating toolbar with Claude and Find in source buttons.
-- **Click-to-jump** — Double-click any block to jump to its source line.
+- **Selection action bar** — Select text to get a floating toolbar with **Add** (send to Claude Code), **Inline Edit** (rewrite via Claude), **Translate** (English dictionary lookup with IPA), and **Find in source**.
+- **Code block copy** — Hover a rendered code block to reveal a copy button.
 - **Bidirectional scroll sync** — Scrolling either the source editor or the preview keeps the other in sync.
 - **Theme-aware** — Follows your VS Code light/dark/high-contrast theme.
 
@@ -22,7 +22,7 @@ The extension runs an MCP-compatible WebSocket server. Claude Code discovers it 
 1. Install the extension and open a markdown file.
 2. Run `claude` in a terminal.
 3. Run `/ide` inside Claude Code and select **Ask Markdown**.
-4. Select text in the preview and click **Claude**. The terminal gets focus automatically.
+4. Select text in the preview and click **Add**. The terminal gets focus automatically.
 
 Claude Code receives the file reference (e.g. `@file.md:10-20`) in its context.
 
@@ -57,6 +57,7 @@ This is not needed when running Claude Code from an external terminal (outside C
 
 - `ask-markdown.defaultEditor` — Use Ask Markdown as the default editor for `.md` files (default: `false`).
 - `ask-markdown.showFloatingButton` — Show the floating action bar when text is selected (default: `true`).
+- `ask-markdown.translateEnabled` — Show the Translate button in the floating action bar (default: `true`).
 
 ## Known issues
 
