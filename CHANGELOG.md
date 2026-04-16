@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.3.16 - 2026-04-17
+
+- Update README to reflect the Add / Inline Edit / Translate toolbar, code-block copy button, and `translateEnabled` setting; drop the stale double-click-to-jump entry
+
+## 0.3.15 - 2026-04-17
+
+- Replace the Claude-backed Translate action with a dictionary lookup (IPA + short definitions) via dictionaryapi.dev
+- Replace the `ask-markdown.outputLanguage` setting with `ask-markdown.translateEnabled` to toggle the Translate button
+- Live-update the Translate button's visibility when the setting changes
+
 ## 0.3.14 - 2026-04-17
 
 - Maintenance release
