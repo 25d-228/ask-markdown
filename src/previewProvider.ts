@@ -5,6 +5,7 @@ const katex = require('katex');
 const hljs = require('highlight.js/lib/common');
 import { spawn } from 'child_process';
 import * as fs from 'fs';
+import * as https from 'https';
 import * as os from 'os';
 import * as path from 'path';
 import { toRange } from './sourceMapper';
@@ -197,6 +198,97 @@ function buildHtml(
 </html>`;
 }
 
+interface DictionaryPhonetic {
+	text?: string;
+	audio?: string;
+}
+
+interface DictionaryDefinition {
+	definition?: string;
+}
+
+interface DictionaryMeaning {
+	partOfSpeech?: string;
+	definitions?: DictionaryDefinition[];
+}
+
+interface DictionaryEntry {
+	word?: string;
+	phonetic?: string;
+	phonetics?: DictionaryPhonetic[];
+	meanings?: DictionaryMeaning[];
+}
+
+function pickIPA(entry: DictionaryEntry): string {
+	const phonetics = Array.isArray(entry.phonetics) ? entry.phonetics : [];
+	// Prefer the variant with a US audio URL.
+	for (const p of phonetics) {
+		if (
+			p &&
+			typeof p.text === 'string' &&
+			p.text &&
+			typeof p.audio === 'string' &&
+			/-us\.|_us\./i.test(p.audio)
+		) {
+			return p.text;
+		}
+	}
+	// Fallback: any phonetic text.
+	for (const p of phonetics) {
+		if (p && typeof p.text === 'string' && p.text) {
+			return p.text;
+		}
+	}
+	return entry.phonetic ?? '';
+}
+
+function formatDictionaryEntry(data: unknown, word: string): string {
+	const entries = Array.isArray(data) ? (data as DictionaryEntry[]) : [];
+	if (entries.length === 0) {
+		return `No entry found for "${word}".`;
+	}
+
+	let ipa = '';
+	for (const entry of entries) {
+		ipa = pickIPA(entry);
+		if (ipa) {
+			break;
+		}
+	}
+
+	const lines: string[] = [];
+	if (ipa) {
+		lines.push(ipa);
+		lines.push('');
+	}
+
+	for (const entry of entries) {
+		const meanings = Array.isArray(entry.meanings) ? entry.meanings : [];
+		for (const meaning of meanings) {
+			const pos = meaning.partOfSpeech ?? '';
+			const defs = Array.isArray(meaning.definitions)
+				? meaning.definitions
+				: [];
+			let count = 0;
+			for (const def of defs) {
+				if (count >= 2) {
+					break;
+				}
+				if (def && typeof def.definition === 'string' && def.definition) {
+					lines.push(`${pos}: ${def.definition}`);
+					count++;
+				}
+			}
+		}
+	}
+
+	if (lines.length === 0 || (ipa && lines.length === 2)) {
+		lines.push(`No definitions available for "${word}".`);
+	}
+
+	return lines.join('\n').trim();
+}
+
 async function revealInSourceEditor(
 	document: vscode.TextDocument,
 	startLine: number,
@@ -274,6 +366,10 @@ export class AskMarkdownEditorProvider implements vscode.CustomTextEditorProvide
 			enabled: initConfig.get<boolean>('showFloatingButton', true),
 		});
 		webviewPanel.webview.postMessage({
+			type: 'updateTranslateEnabled',
+			enabled: initConfig.get<boolean>('translateEnabled', true),
+		});
+		webviewPanel.webview.postMessage({
 			type: 'updateSource',
 			text: document.getText(),
 		});
@@ -304,7 +400,7 @@ export class AskMarkdownEditorProvider implements vscode.CustomTextEditorProvide
 		let scrollingFromPreview = false;
 		let scrollGuardTimer: ReturnType<typeof setTimeout> | null = null;
 		let inlineEditProc: ReturnType<typeof spawn> | null = null;
-		let translateProc: ReturnType<typeof spawn> | null = null;
+		let translateAbort: AbortController | null = null;
 
 		const scrollSubscription =
 			vscode.window.onDidChangeTextEditorVisibleRanges((e) => {
@@ -585,95 +681,96 @@ export class AskMarkdownEditorProvider implements vscode.CustomTextEditorProvide
 						inlineEditProc = null;
 					}
 				} else if (message.type === 'translate') {
-					if (translateProc) {
-						translateProc.kill();
-						translateProc = null;
+					if (translateAbort) {
+						translateAbort.abort();
+						translateAbort = null;
 					}
 
-					const selectedText = message.text as string;
-					const language = vscode.workspace
-						.getConfiguration('ask-markdown')
-						.get<string>('outputLanguage', 'en')
-						.trim() || 'en';
+					const selectedText = (message.text as string) || '';
+					const wordMatch = selectedText.match(/[a-zA-Z][a-zA-Z'-]*/);
+					const word = wordMatch ? wordMatch[0].toLowerCase() : '';
 
-					const prompt =
-						'For the text below, output exactly two parts on separate lines:\n' +
-						'1. First line: IPA pronunciation in US English style (e.g. /trænzˈleɪʃən/). For non-English text, give a phonetic IPA approximation. For long selections, give the IPA of the most prominent word/phrase only.\n' +
-						`2. Following lines: literal translation/explanation in ${language} (ISO language code), focusing on natural-language meaning (not code or syntax).\n` +
-						'No preamble, no labels, no quotes — just the IPA line, then the translation. Do NOT try to read any files; everything you need is below.\n\n' +
-						`Text:\n${selectedText}\n`;
-
-					const proc = spawn(
-						'claude',
-						[
-							'-p',
-							'--output-format', 'text',
-							'--model', 'haiku',
-							'--allowedTools', '',
-						],
-						{ stdio: ['pipe', 'pipe', 'pipe'] },
-					);
-					translateProc = proc;
-
-					let accumulated = '';
-					const errChunks: Buffer[] = [];
-
-					proc.stdout!.on('data', (data: Buffer) => {
-						accumulated += data.toString();
-						webviewPanel.webview.postMessage({
-							type: 'translateResult',
-							result: accumulated,
-							language,
-							streaming: true,
-						});
-					});
-					proc.stderr!.on('data', (data: Buffer) => {
-						errChunks.push(data);
-					});
-
-					proc.on('close', (code, signal) => {
-						if (translateProc !== proc) {
-							return;
-						}
-						translateProc = null;
-						if (signal === 'SIGTERM' || signal === 'SIGKILL') {
-							return;
-						}
-						if (code !== 0) {
-							const stderr = Buffer.concat(errChunks)
-								.toString()
-								.trim();
-							webviewPanel.webview.postMessage({
-								type: 'translateError',
-								error: `Claude exited with code ${code}${stderr ? ': ' + stderr : ''}`,
-							});
-							return;
-						}
-						webviewPanel.webview.postMessage({
-							type: 'translateResult',
-							result: accumulated.trim(),
-							language,
-							streaming: false,
-						});
-					});
-
-					proc.on('error', (err) => {
-						if (translateProc !== proc) {
-							return;
-						}
-						translateProc = null;
+					if (!word) {
 						webviewPanel.webview.postMessage({
 							type: 'translateError',
-							error: `Failed to run claude: ${err.message}`,
+							error: 'Select an English word to look up.',
+						});
+						return;
+					}
+
+					const url =
+						'https://api.dictionaryapi.dev/api/v2/entries/en/' +
+						encodeURIComponent(word);
+					const controller = new AbortController();
+					translateAbort = controller;
+
+					const req = https.get(
+						url,
+						{ signal: controller.signal },
+						(res) => {
+							const chunks: Buffer[] = [];
+							res.on('data', (chunk: Buffer) => chunks.push(chunk));
+							res.on('end', () => {
+								if (translateAbort !== controller) {
+									return;
+								}
+								translateAbort = null;
+
+								if (res.statusCode === 404) {
+									webviewPanel.webview.postMessage({
+										type: 'translateError',
+										error: `"${word}" not found in dictionary.`,
+									});
+									return;
+								}
+								if (res.statusCode !== 200) {
+									webviewPanel.webview.postMessage({
+										type: 'translateError',
+										error: `Lookup failed (HTTP ${res.statusCode ?? '?'}).`,
+									});
+									return;
+								}
+
+								try {
+									const data = JSON.parse(
+										Buffer.concat(chunks).toString(),
+									);
+									const formatted = formatDictionaryEntry(
+										data,
+										word,
+									);
+									webviewPanel.webview.postMessage({
+										type: 'translateResult',
+										result: formatted,
+										language: 'en',
+										streaming: false,
+									});
+								} catch (err) {
+									webviewPanel.webview.postMessage({
+										type: 'translateError',
+										error: `Failed to parse response: ${(err as Error).message}`,
+									});
+								}
+							});
+						},
+					);
+					req.on('error', (err) => {
+						if (translateAbort !== controller) {
+							return;
+						}
+						translateAbort = null;
+						if ((err as NodeJS.ErrnoException).code === 'ABORT_ERR') {
+							return;
+						}
+						webviewPanel.webview.postMessage({
+							type: 'translateError',
+							error: `Network error: ${err.message}`,
 						});
 					});
-
-					proc.stdin!.write(prompt);
-					proc.stdin!.end();
 				} else if (message.type === 'translateCancel') {
-					if (translateProc) {
-						translateProc.kill();
-						translateProc = null;
+					if (translateAbort) {
+						translateAbort.abort();
+						translateAbort = null;
 					}
 				} else if (message.type === 'openExternalEditor') {
 					const viewColumn =
@@ -710,12 +807,17 @@ export class AskMarkdownEditorProvider implements vscode.CustomTextEditorProvide
 
 		const configSubscription = vscode.workspace.onDidChangeConfiguration(
 			(e) => {
+				const cfg = vscode.workspace.getConfiguration('ask-markdown');
 				if (e.affectsConfiguration('ask-markdown.showFloatingButton')) {
-					const cfg =
-						vscode.workspace.getConfiguration('ask-markdown');
 					webviewPanel.webview.postMessage({
 						type: 'updateShowFloatingButton',
 						enabled: cfg.get<boolean>('showFloatingButton', true),
+					});
+				}
+				if (e.affectsConfiguration('ask-markdown.translateEnabled')) {
+					webviewPanel.webview.postMessage({
+						type: 'updateTranslateEnabled',
+						enabled: cfg.get<boolean>('translateEnabled', true),
 					});
 				}
 			},
@@ -730,9 +832,9 @@ export class AskMarkdownEditorProvider implements vscode.CustomTextEditorProvide
 				inlineEditProc.kill();
 				inlineEditProc = null;
 			}
-			if (translateProc) {
-				translateProc.kill();
-				translateProc = null;
+			if (translateAbort) {
+				translateAbort.abort();
+				translateAbort = null;
 			}
 		});
 	}

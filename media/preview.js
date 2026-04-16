@@ -982,6 +982,16 @@
 		} else if (msg.type === 'updateShowFloatingButton') {
 			bar.style.display = 'none';
 			bar.dataset.enabled = msg.enabled ? 'true' : 'false';
+		} else if (msg.type === 'updateTranslateEnabled') {
+			var tBtn = bar.querySelector('[data-action="translate"]');
+			if (tBtn) {
+				var sep = tBtn.previousElementSibling;
+				var on = msg.enabled !== false;
+				tBtn.style.display = on ? '' : 'none';
+				if (sep && sep.classList.contains('ask-bar-sep')) {
+					sep.style.display = on ? '' : 'none';
+				}
+			}
 		} else if (msg.type === 'inlineEditDone') {
 			hideEditBar();
 		} else if (msg.type === 'inlineEditError') {
