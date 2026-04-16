@@ -31,6 +31,20 @@
 	var toggleBtn = document.getElementById('toggle-source');
 	var bar = document.getElementById('ask-bar');
 	var findBtn = bar.querySelector('[data-action="find"]');
+	var editBar = document.getElementById('edit-bar');
+	var editInput = document.getElementById('edit-input');
+	var editSubmit = document.getElementById('edit-submit');
+	var editCancel = document.getElementById('edit-cancel');
+	var editStatusText = editBar
+		? editBar.querySelector('.edit-status-text')
+		: null;
+	var translateBar = document.getElementById('translate-bar');
+	var translateClose = document.getElementById('translate-close');
+	var translateLang = document.getElementById('translate-lang');
+	var translateContent = document.getElementById('translate-content');
+	var translateStatusText = translateBar
+		? translateBar.querySelector('.translate-status-text')
+		: null;
 
 	// ── Line numbers ──
 
@@ -584,6 +598,12 @@
 				startLine: currentRange.startLine,
 				endLine: currentRange.endLine,
 			});
+		} else if (action === 'edit') {
+			showEditBar(currentRange);
+			return;
+		} else if (action === 'translate') {
+			showTranslateBar(currentRange);
+			return;
 		} else if (action === 'find') {
 			var sel = {
 				startLine: currentRange.startLine,
@@ -597,6 +617,256 @@
 		}
 		hideBar();
 	});
+
+	// ── Inline edit bar ──
+
+	var editRange = null;
+
+	function positionEditBar() {
+		if (!editBar) {
+			return;
+		}
+		var w = editBar.offsetWidth;
+		var h = editBar.offsetHeight;
+		var anchorLeft = lastMouseX;
+		var anchorTop = lastMouseY;
+		if (mode === 'preview') {
+			var sel = window.getSelection();
+			if (sel && sel.rangeCount) {
+				var rect = sel.getRangeAt(0).getBoundingClientRect();
+				if (rect.width || rect.height) {
+					anchorLeft = rect.left + rect.width / 2;
+					anchorTop = rect.top;
+				}
+			}
+		}
+		var left = Math.max(8, Math.min(window.innerWidth - w - 8, anchorLeft - w / 2));
+		var top = anchorTop - h - 8;
+		if (top < 8) {
+			top = anchorTop + 16;
+		}
+		editBar.style.left = left + 'px';
+		editBar.style.top = top + 'px';
+	}
+
+	function showEditBar(range) {
+		if (!editBar || !range) {
+			return;
+		}
+		editRange = {
+			text: range.text,
+			startLine: range.startLine,
+			endLine: range.endLine,
+		};
+		bar.style.display = 'none';
+		editBar.classList.remove('thinking');
+		editBar.classList.remove('error');
+		editBar.classList.add('visible');
+		editInput.disabled = false;
+		editSubmit.disabled = false;
+		editCancel.disabled = false;
+		editInput.value = '';
+		if (editStatusText) {
+			editStatusText.textContent = 'Thinking\u2026';
+		}
+		positionEditBar();
+		// Re-position once the bar has actual dimensions.
+		setTimeout(positionEditBar, 0);
+		editInput.focus();
+	}
+
+	function hideEditBar() {
+		if (!editBar) {
+			return;
+		}
+		editBar.classList.remove('visible');
+		editBar.classList.remove('thinking');
+		editBar.classList.remove('error');
+		if (editRange) {
+			vscode.postMessage({ type: 'previewSelectionCleared' });
+		}
+		editRange = null;
+	}
+
+	function setEditThinking(on) {
+		if (!editBar) {
+			return;
+		}
+		if (on) {
+			editBar.classList.add('thinking');
+			editInput.disabled = true;
+			editSubmit.disabled = true;
+			if (editStatusText) {
+				editStatusText.textContent = 'Thinking\u2026';
+			}
+		} else {
+			editBar.classList.remove('thinking');
+			editInput.disabled = false;
+			editSubmit.disabled = false;
+		}
+	}
+
+	function submitEdit() {
+		if (!editRange) {
+			return;
+		}
+		var instruction = editInput.value.trim();
+		if (!instruction) {
+			editInput.focus();
+			return;
+		}
+		editBar.classList.remove('error');
+		setEditThinking(true);
+		vscode.postMessage({
+			type: 'inlineEdit',
+			startLine: editRange.startLine,
+			endLine: editRange.endLine,
+			text: editRange.text,
+			instruction: instruction,
+		});
+	}
+
+	function cancelEdit() {
+		var wasThinking = editBar && editBar.classList.contains('thinking');
+		if (wasThinking) {
+			vscode.postMessage({ type: 'inlineEditCancel' });
+		}
+		hideEditBar();
+	}
+
+	if (editBar) {
+		editSubmit.addEventListener('click', submitEdit);
+		editCancel.addEventListener('click', cancelEdit);
+		editInput.addEventListener('keydown', function (e) {
+			if (e.key === 'Enter' && !e.shiftKey) {
+				e.preventDefault();
+				submitEdit();
+			} else if (e.key === 'Escape') {
+				e.preventDefault();
+				cancelEdit();
+			}
+		});
+		window.addEventListener('resize', function () {
+			if (editBar.classList.contains('visible')) {
+				positionEditBar();
+			}
+		});
+	}
+
+	// ── Translate bar ──
+
+	var translateRange = null;
+
+	function positionTranslateBar() {
+		if (!translateBar) {
+			return;
+		}
+		var w = translateBar.offsetWidth;
+		var h = translateBar.offsetHeight;
+		var anchorLeft = lastMouseX;
+		var anchorTop = lastMouseY;
+		if (mode === 'preview') {
+			var sel = window.getSelection();
+			if (sel && sel.rangeCount) {
+				var rect = sel.getRangeAt(0).getBoundingClientRect();
+				if (rect.width || rect.height) {
+					anchorLeft = rect.left + rect.width / 2;
+					anchorTop = rect.top;
+				}
+			}
+		}
+		var left = Math.max(8, Math.min(window.innerWidth - w - 8, anchorLeft - w / 2));
+		var top = anchorTop - h - 8;
+		if (top < 8) {
+			top = anchorTop + 16;
+		}
+		translateBar.style.left = left + 'px';
+		translateBar.style.top = top + 'px';
+	}
+
+	function showTranslateBar(range) {
+		if (!translateBar || !range) {
+			return;
+		}
+		translateRange = {
+			text: range.text,
+			startLine: range.startLine,
+			endLine: range.endLine,
+		};
+		bar.style.display = 'none';
+		translateBar.classList.remove('done');
+		translateBar.classList.remove('error');
+		translateBar.classList.add('visible');
+		if (translateContent) {
+			translateContent.textContent = '';
+		}
+		if (translateStatusText) {
+			translateStatusText.textContent = 'Thinking\u2026';
+		}
+		if (translateLang) {
+			translateLang.textContent = '';
+		}
+		positionTranslateBar();
+		setTimeout(positionTranslateBar, 0);
+		vscode.postMessage({
+			type: 'translate',
+			startLine: translateRange.startLine,
+			endLine: translateRange.endLine,
+			text: translateRange.text,
+		});
+	}
+
+	function hideTranslateBar() {
+		if (!translateBar) {
+			return;
+		}
+		var wasPending =
+			translateBar.classList.contains('visible') &&
+			!translateBar.classList.contains('done') &&
+			!translateBar.classList.contains('error');
+		if (wasPending) {
+			vscode.postMessage({ type: 'translateCancel' });
+		}
+		translateBar.classList.remove('visible');
+		translateBar.classList.remove('done');
+		translateBar.classList.remove('error');
+		if (translateRange) {
+			vscode.postMessage({ type: 'previewSelectionCleared' });
+		}
+		translateRange = null;
+	}
+
+	if (translateBar) {
+		translateClose.addEventListener('click', hideTranslateBar);
+		document.addEventListener('keydown', function (e) {
+			if (
+				e.key === 'Escape' &&
+				translateBar.classList.contains('visible')
+			) {
+				e.preventDefault();
+				hideTranslateBar();
+			}
+		});
+		// Click anywhere outside the translate bar dismisses it.
+		document.addEventListener(
+			'mousedown',
+			function (e) {
+				if (!translateBar.classList.contains('visible')) {
+					return;
+				}
+				if (translateBar.contains(e.target)) {
+					return;
+				}
+				hideTranslateBar();
+			},
+			true,
+		);
+		window.addEventListener('resize', function () {
+			if (translateBar.classList.contains('visible')) {
+				positionTranslateBar();
+			}
+		});
+	}
 
 	// ── Selection detection ──
 
@@ -710,6 +980,7 @@
 			}
 		} else if (msg.type === 'updateContent') {
 			contentEl.innerHTML = msg.body;
+			injectCopyButtons();
 		} else if (msg.type === 'updateSource') {
 			rawSource = msg.text;
 			if (mode === 'source' && !textareaEditing) {
@@ -731,6 +1002,48 @@
 		} else if (msg.type === 'updateShowFloatingButton') {
 			bar.style.display = 'none';
 			bar.dataset.enabled = msg.enabled ? 'true' : 'false';
+		} else if (msg.type === 'inlineEditDone') {
+			hideEditBar();
+		} else if (msg.type === 'inlineEditError') {
+			if (!editBar) {
+				return;
+			}
+			editBar.classList.remove('thinking');
+			editBar.classList.add('error');
+			editInput.disabled = false;
+			editSubmit.disabled = false;
+			if (editStatusText) {
+				editStatusText.textContent =
+					typeof msg.error === 'string' ? msg.error : 'Edit failed';
+			}
+			editInput.focus();
+		} else if (msg.type === 'translateResult') {
+			if (!translateBar) {
+				return;
+			}
+			var firstChunk = !translateBar.classList.contains('done');
+			translateBar.classList.remove('error');
+			translateBar.classList.add('done');
+			if (translateLang && typeof msg.language === 'string') {
+				translateLang.textContent = '(' + msg.language + ')';
+			}
+			if (translateContent) {
+				translateContent.textContent =
+					typeof msg.result === 'string' ? msg.result : '';
+			}
+			if (firstChunk) {
+				positionTranslateBar();
+			}
+		} else if (msg.type === 'translateError') {
+			if (!translateBar) {
+				return;
+			}
+			translateBar.classList.remove('done');
+			translateBar.classList.add('error');
+			if (translateStatusText) {
+				translateStatusText.textContent =
+					typeof msg.error === 'string' ? msg.error : 'Translate failed';
+			}
 		}
 	});
 
@@ -771,4 +1084,53 @@
 
 	contentScroll.addEventListener('scroll', emitScrollLine);
 	sourceTextarea.addEventListener('scroll', emitScrollLine);
+
+	// ── Code block copy buttons ──
+
+	var ICON_COPY = '<svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M3 5V12.73C2.4 12.38 2 11.74 2 11V5C2 2.79 3.79 1 6 1H9C9.74 1 10.38 1.4 10.73 2H6C4.35 2 3 3.35 3 5ZM11 15H6C4.897 15 4 14.103 4 13V5C4 3.897 4.897 3 6 3H11C12.103 3 13 3.897 13 5V13C13 14.103 12.103 15 11 15ZM12 5C12 4.448 11.552 4 11 4H6C5.448 4 5 4.448 5 5V13C5 13.552 5.448 14 6 14H11C11.552 14 12 13.552 12 13V5Z"/></svg>';
+	var ICON_CHECK = '<svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M13.6572 3.13573C13.8583 2.9465 14.175 2.95614 14.3643 3.15722C14.5535 3.35831 14.5438 3.675 14.3428 3.86425L5.84277 11.8642C5.64597 12.0494 5.33756 12.0446 5.14648 11.8535L1.64648 8.35351C1.45121 8.15824 1.45121 7.84174 1.64648 7.64647C1.84174 7.45121 2.15825 7.45121 2.35351 7.64647L5.50976 10.8027L13.6572 3.13573Z"/></svg>';
+
+	function injectCopyButtons() {
+		var pres = contentEl.querySelectorAll('pre');
+		for (var i = 0; i < pres.length; i++) {
+			if (pres[i].parentElement && pres[i].parentElement.classList.contains('code-block-wrapper')) {
+				continue;
+			}
+			var wrapper = document.createElement('div');
+			wrapper.className = 'code-block-wrapper';
+			pres[i].parentNode.insertBefore(wrapper, pres[i]);
+			wrapper.appendChild(pres[i]);
+			var btn = document.createElement('button');
+			btn.className = 'copy-btn';
+			btn.innerHTML = ICON_COPY;
+			btn.title = 'Copy code';
+			wrapper.appendChild(btn);
+		}
+	}
+
+	contentEl.addEventListener('click', function (e) {
+		var btn = e.target.closest('.copy-btn');
+		if (!btn) {
+			return;
+		}
+		var wrapper = btn.closest('.code-block-wrapper');
+		if (!wrapper) {
+			return;
+		}
+		var pre = wrapper.querySelector('pre');
+		var code = pre ? pre.querySelector('code') : null;
+		var text = code ? code.textContent : (pre ? pre.textContent : '');
+		if (navigator.clipboard && navigator.clipboard.writeText) {
+			navigator.clipboard.writeText(text).then(function () {
+				btn.innerHTML = ICON_CHECK;
+				setTimeout(function () {
+					btn.innerHTML = ICON_COPY;
+				}, 2000);
+			}).catch(function () {
+				btn.innerHTML = ICON_COPY;
+			});
+		}
+	});
+
+	injectCopyButtons();
 })();

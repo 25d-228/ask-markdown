@@ -3,6 +3,10 @@ import MarkdownIt from 'markdown-it';
 const texmath = require('markdown-it-texmath');
 const katex = require('katex');
 const hljs = require('highlight.js/lib/common');
+import { spawn } from 'child_process';
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
 import { toRange } from './sourceMapper';
 import { broadcast, isConnected, updateLatestSelection } from './claudeServer';
 
@@ -152,9 +156,41 @@ function buildHtml(
 		</div>
 	</div>
 	<div id="ask-bar">
-		<button data-action="claude">Claude</button>
+		<button data-action="claude">Add</button>
+		<span class="ask-bar-sep"></span>
+		<button data-action="edit">Inline Edit</button>
+		<span class="ask-bar-sep"></span>
+		<button data-action="translate">Translate</button>
 		<span class="ask-bar-sep"></span>
 		<button data-action="find">Find in source</button>
+	</div>
+	<div id="edit-bar">
+		<input id="edit-input" type="text" placeholder='e.g. "make this a numbered list"' autocomplete="off" spellcheck="false" />
+		<button id="edit-submit" type="button" title="Submit (Enter)">Edit</button>
+		<button id="edit-cancel" type="button" title="Cancel (Esc)">&times;</button>
+		<div id="edit-status" aria-live="polite">
+			<span class="edit-thinking">
+				<span class="edit-square"></span>
+				<span class="edit-square"></span>
+				<span class="edit-square"></span>
+			</span>
+			<span class="edit-status-text">Thinking\u2026</span>
+		</div>
+	</div>
+	<div id="translate-bar">
+		<div id="translate-header">
+			<span class="translate-title">Translation <span id="translate-lang"></span></span>
+			<button id="translate-close" type="button" title="Close (Esc)">&times;</button>
+		</div>
+		<div id="translate-status" aria-live="polite">
+			<span class="edit-thinking">
+				<span class="edit-square"></span>
+				<span class="edit-square"></span>
+				<span class="edit-square"></span>
+			</span>
+			<span class="translate-status-text">Thinking\u2026</span>
+		</div>
+		<div id="translate-content" aria-live="polite"></div>
 	</div>
 	<script nonce="${nonce}" src="${jsUri}"></script>
 </body>
@@ -267,6 +303,8 @@ export class AskMarkdownEditorProvider implements vscode.CustomTextEditorProvide
 
 		let scrollingFromPreview = false;
 		let scrollGuardTimer: ReturnType<typeof setTimeout> | null = null;
+		let inlineEditProc: ReturnType<typeof spawn> | null = null;
+		let translateProc: ReturnType<typeof spawn> | null = null;
 
 		const scrollSubscription =
 			vscode.window.onDidChangeTextEditorVisibleRanges((e) => {
@@ -398,6 +436,245 @@ export class AskMarkdownEditorProvider implements vscode.CustomTextEditorProvide
 					const edit = new vscode.WorkspaceEdit();
 					edit.replace(document.uri, fullRange, newText);
 					await vscode.workspace.applyEdit(edit);
+				} else if (message.type === 'inlineEdit') {
+					if (inlineEditProc) {
+						inlineEditProc.kill();
+						inlineEditProc = null;
+					}
+
+					const startLine = Number(message.startLine);
+					const endLine = Number(message.endLine);
+					const selectedText = message.text as string;
+					const instruction =
+						typeof message.instruction === 'string'
+							? message.instruction.trim()
+							: '';
+
+					if (!instruction) {
+						webviewPanel.webview.postMessage({
+							type: 'inlineEditError',
+							error: 'Empty instruction',
+						});
+						return;
+					}
+
+					// Write the current in-memory document content to a
+					// scratch file we own. Claude edits that copy; we apply
+					// the result back to the real document via WorkspaceEdit
+					// so the change goes through VS Code's normal text edit
+					// pipeline (undo-able, no file watcher dependency, works
+					// even when the document has unsaved changes).
+					const baseName = path.basename(document.uri.fsPath) || 'doc.md';
+					const safeBase = baseName.replace(/[^a-zA-Z0-9._-]/g, '_');
+					const tempPath = path.join(
+						os.tmpdir(),
+						`ask-markdown-edit-${Date.now()}-${safeBase}`,
+					);
+					try {
+						fs.writeFileSync(tempPath, document.getText(), 'utf8');
+					} catch (err) {
+						webviewPanel.webview.postMessage({
+							type: 'inlineEditError',
+							error: `Failed to create scratch file: ${(err as Error).message}`,
+						});
+						return;
+					}
+
+					const cleanup = (): void => {
+						try {
+							fs.unlinkSync(tempPath);
+						} catch {
+							// Already gone.
+						}
+					};
+
+					const prompt =
+						`File to edit: ${tempPath}\n` +
+						`Lines ${startLine}-${endLine} (1-based, inclusive) currently contain:\n\n` +
+						`${selectedText}\n\n` +
+						`User instruction: ${instruction}\n\n` +
+						'Use your Edit tool to apply the instruction to the selected lines in the file. ' +
+						'Read the file first if you need surrounding context to make the old_string unique. ' +
+						'Output nothing — just edit the file and exit.';
+
+					const proc = spawn(
+						'claude',
+						[
+							'-p',
+							'--output-format', 'text',
+							'--model', 'sonnet',
+							'--allowedTools', 'Read,Edit',
+						],
+						{ stdio: ['pipe', 'pipe', 'pipe'] },
+					);
+					inlineEditProc = proc;
+
+					const errChunks: Buffer[] = [];
+
+					proc.stdout!.on('data', () => {
+						// Discard claude's chatter; the result is on disk.
+					});
+					proc.stderr!.on('data', (data: Buffer) => {
+						errChunks.push(data);
+					});
+
+					proc.on('close', async (code, signal) => {
+						if (inlineEditProc !== proc) {
+							return;
+						}
+						inlineEditProc = null;
+						if (signal === 'SIGTERM' || signal === 'SIGKILL') {
+							cleanup();
+							webviewPanel.webview.postMessage({
+								type: 'inlineEditDone',
+							});
+							return;
+						}
+						if (code !== 0) {
+							const stderr = Buffer.concat(errChunks)
+								.toString()
+								.trim();
+							cleanup();
+							webviewPanel.webview.postMessage({
+								type: 'inlineEditError',
+								error: `Claude exited with code ${code}${stderr ? ': ' + stderr : ''}`,
+							});
+							return;
+						}
+						try {
+							const newContent = fs.readFileSync(tempPath, 'utf8');
+							if (newContent !== document.getText()) {
+								const fullRange = new vscode.Range(
+									document.positionAt(0),
+									document.positionAt(document.getText().length),
+								);
+								const edit = new vscode.WorkspaceEdit();
+								edit.replace(document.uri, fullRange, newContent);
+								await vscode.workspace.applyEdit(edit);
+							}
+							webviewPanel.webview.postMessage({
+								type: 'inlineEditDone',
+							});
+						} catch (err) {
+							webviewPanel.webview.postMessage({
+								type: 'inlineEditError',
+								error: `Failed to apply edit: ${(err as Error).message}`,
+							});
+						} finally {
+							cleanup();
+						}
+					});
+
+					proc.on('error', (err) => {
+						if (inlineEditProc !== proc) {
+							return;
+						}
+						inlineEditProc = null;
+						cleanup();
+						webviewPanel.webview.postMessage({
+							type: 'inlineEditError',
+							error: `Failed to run claude: ${err.message}`,
+						});
+					});
+
+					proc.stdin!.write(prompt);
+					proc.stdin!.end();
+				} else if (message.type === 'inlineEditCancel') {
+					if (inlineEditProc) {
+						inlineEditProc.kill();
+						inlineEditProc = null;
+					}
+				} else if (message.type === 'translate') {
+					if (translateProc) {
+						translateProc.kill();
+						translateProc = null;
+					}
+
+					const selectedText = message.text as string;
+					const language = vscode.workspace
+						.getConfiguration('ask-markdown')
+						.get<string>('outputLanguage', 'en')
+						.trim() || 'en';
+
+					const prompt =
+						'For the text below, output exactly two parts on separate lines:\n' +
+						'1. First line: IPA pronunciation in US English style (e.g. /trænzˈleɪʃən/). For non-English text, give a phonetic IPA approximation. For long selections, give the IPA of the most prominent word/phrase only.\n' +
+						`2. Following lines: literal translation/explanation in ${language} (ISO language code), focusing on natural-language meaning (not code or syntax).\n` +
+						'No preamble, no labels, no quotes — just the IPA line, then the translation. Do NOT try to read any files; everything you need is below.\n\n' +
+						`Text:\n${selectedText}\n`;
+
+					const proc = spawn(
+						'claude',
+						[
+							'-p',
+							'--output-format', 'text',
+							'--model', 'haiku',
+							'--allowedTools', '',
+						],
+						{ stdio: ['pipe', 'pipe', 'pipe'] },
+					);
+					translateProc = proc;
+
+					let accumulated = '';
+					const errChunks: Buffer[] = [];
+
+					proc.stdout!.on('data', (data: Buffer) => {
+						accumulated += data.toString();
+						webviewPanel.webview.postMessage({
+							type: 'translateResult',
+							result: accumulated,
+							language,
+							streaming: true,
+						});
+					});
+					proc.stderr!.on('data', (data: Buffer) => {
+						errChunks.push(data);
+					});
+
+					proc.on('close', (code, signal) => {
+						if (translateProc !== proc) {
+							return;
+						}
+						translateProc = null;
+						if (signal === 'SIGTERM' || signal === 'SIGKILL') {
+							return;
+						}
+						if (code !== 0) {
+							const stderr = Buffer.concat(errChunks)
+								.toString()
+								.trim();
+							webviewPanel.webview.postMessage({
+								type: 'translateError',
+								error: `Claude exited with code ${code}${stderr ? ': ' + stderr : ''}`,
+							});
+							return;
+						}
+						webviewPanel.webview.postMessage({
+							type: 'translateResult',
+							result: accumulated.trim(),
+							language,
+							streaming: false,
+						});
+					});
+
+					proc.on('error', (err) => {
+						if (translateProc !== proc) {
+							return;
+						}
+						translateProc = null;
+						webviewPanel.webview.postMessage({
+							type: 'translateError',
+							error: `Failed to run claude: ${err.message}`,
+						});
+					});
+
+					proc.stdin!.write(prompt);
+					proc.stdin!.end();
+				} else if (message.type === 'translateCancel') {
+					if (translateProc) {
+						translateProc.kill();
+						translateProc = null;
+					}
 				} else if (message.type === 'openExternalEditor') {
 					const viewColumn =
 						webviewPanel.viewColumn ??
@@ -449,6 +726,14 @@ export class AskMarkdownEditorProvider implements vscode.CustomTextEditorProvide
 			scrollSubscription.dispose();
 			messageSubscription.dispose();
 			configSubscription.dispose();
+			if (inlineEditProc) {
+				inlineEditProc.kill();
+				inlineEditProc = null;
+			}
+			if (translateProc) {
+				translateProc.kill();
+				translateProc = null;
+			}
 		});
 	}
 }

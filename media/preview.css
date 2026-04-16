@@ -113,6 +113,43 @@ pre code {
 	border-radius: 0;
 }
 
+/* ── Code block copy button ── */
+
+.code-block-wrapper {
+	position: relative;
+}
+
+.copy-btn {
+	position: absolute;
+	top: 4px;
+	right: 4px;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	width: 28px;
+	height: 28px;
+	padding: 0;
+	background: var(--vscode-editorWidget-background, #252526);
+	color: var(--vscode-editor-foreground);
+	border: 1px solid var(--vscode-editorWidget-border, var(--vscode-panel-border));
+	border-radius: 3px;
+	cursor: pointer;
+	opacity: 0;
+	transition: opacity 0.15s;
+	z-index: 1;
+}
+
+.code-block-wrapper:hover .copy-btn {
+	opacity: 0.7;
+}
+
+.copy-btn:hover {
+	opacity: 1 !important;
+	background: var(--vscode-button-background, #0e639c);
+	color: var(--vscode-button-foreground, #fff);
+	border-color: var(--vscode-button-background, #0e639c);
+}
+
 hr {
 	border: 0;
 	border-top: 1px solid var(--vscode-panel-border);
@@ -309,6 +346,236 @@ img {
 	vertical-align: middle;
 	margin: 0 2px;
 	opacity: 0.5;
+}
+
+/* ── Inline edit bar ── */
+
+#edit-bar {
+	display: none;
+	position: fixed;
+	z-index: 101;
+	background: var(--vscode-editorWidget-background, #252526);
+	border: 1px solid var(--vscode-focusBorder, var(--vscode-editorWidget-border, #007acc));
+	border-radius: 5px;
+	padding: 4px;
+	box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+	white-space: nowrap;
+	min-width: 320px;
+	align-items: center;
+	gap: 4px;
+}
+
+#edit-bar.visible {
+	display: flex;
+}
+
+#edit-input {
+	flex: 1;
+	min-width: 0;
+	background: var(--vscode-input-background, #3c3c3c);
+	color: var(--vscode-input-foreground, #cccccc);
+	border: 1px solid var(--vscode-input-border, transparent);
+	border-radius: 3px;
+	padding: 4px 8px;
+	font-size: 0.85em;
+	font-family: var(--vscode-font-family);
+	outline: none;
+}
+
+#edit-input:focus {
+	border-color: var(--vscode-focusBorder, #007acc);
+}
+
+#edit-input:disabled {
+	opacity: 0.6;
+	cursor: not-allowed;
+}
+
+#edit-bar button {
+	background: transparent;
+	color: var(--vscode-editor-foreground);
+	border: none;
+	padding: 4px 8px;
+	font-size: 0.82em;
+	font-family: var(--vscode-font-family);
+	border-radius: 3px;
+	cursor: pointer;
+	line-height: 1;
+}
+
+#edit-bar button:hover {
+	background: var(--vscode-toolbar-hoverBackground, rgba(127, 127, 127, 0.2));
+}
+
+#edit-bar #edit-submit {
+	background: var(--vscode-button-background, #0e639c);
+	color: var(--vscode-button-foreground, #ffffff);
+}
+
+#edit-bar #edit-submit:hover {
+	background: var(--vscode-button-hoverBackground, #1177bb);
+}
+
+#edit-bar #edit-submit:disabled,
+#edit-bar #edit-cancel:disabled {
+	opacity: 0.5;
+	cursor: not-allowed;
+}
+
+#edit-cancel {
+	font-size: 1.1em !important;
+	padding: 2px 8px !important;
+}
+
+#edit-status {
+	display: none;
+	align-items: center;
+	gap: 6px;
+	padding: 0 6px;
+	font-size: 0.8em;
+	color: var(--vscode-descriptionForeground, #999);
+	font-family: var(--vscode-font-family);
+}
+
+#edit-bar.thinking #edit-status,
+#edit-bar.error #edit-status {
+	display: flex;
+}
+
+#edit-bar.thinking #edit-input,
+#edit-bar.thinking #edit-submit {
+	display: none;
+}
+
+#edit-bar.error #edit-status {
+	color: var(--vscode-errorForeground, #f48771);
+}
+
+#edit-bar.error .edit-thinking {
+	display: none;
+}
+
+.edit-thinking {
+	display: inline-flex;
+	gap: 3px;
+	align-items: center;
+}
+
+.edit-square {
+	width: 6px;
+	height: 6px;
+	background: var(--vscode-progressBar-background, #0e70c0);
+	opacity: 0.3;
+	animation: edit-square-pulse 1.2s infinite ease-in-out;
+}
+
+.edit-square:nth-child(2) {
+	animation-delay: 0.2s;
+}
+
+.edit-square:nth-child(3) {
+	animation-delay: 0.4s;
+}
+
+@keyframes edit-square-pulse {
+	0%, 80%, 100% {
+		opacity: 0.3;
+		transform: scale(0.8);
+	}
+	40% {
+		opacity: 1;
+		transform: scale(1);
+	}
+}
+
+/* ── Translate bar ── */
+
+#translate-bar {
+	display: none;
+	position: fixed;
+	z-index: 101;
+	background: var(--vscode-editorWidget-background, #252526);
+	border: 1px solid var(--vscode-focusBorder, var(--vscode-editorWidget-border, #007acc));
+	border-radius: 5px;
+	padding: 0;
+	box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+	min-width: 320px;
+	max-width: 480px;
+	flex-direction: column;
+	font-family: var(--vscode-font-family);
+	color: var(--vscode-editor-foreground);
+}
+
+#translate-bar.visible {
+	display: flex;
+}
+
+#translate-header {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	padding: 4px 4px 4px 10px;
+	border-bottom: 1px solid var(--vscode-editorWidget-border, var(--vscode-panel-border));
+	font-size: 0.82em;
+	color: var(--vscode-descriptionForeground, #999);
+}
+
+.translate-title {
+	font-weight: 500;
+}
+
+#translate-lang {
+	opacity: 0.7;
+	margin-left: 4px;
+}
+
+#translate-close {
+	background: transparent;
+	color: var(--vscode-editor-foreground);
+	border: none;
+	padding: 2px 8px;
+	font-size: 1.1em;
+	border-radius: 3px;
+	cursor: pointer;
+	line-height: 1;
+}
+
+#translate-close:hover {
+	background: var(--vscode-toolbar-hoverBackground, rgba(127, 127, 127, 0.2));
+}
+
+#translate-status {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	padding: 8px 10px;
+	font-size: 0.85em;
+	color: var(--vscode-descriptionForeground, #999);
+}
+
+#translate-bar.done #translate-status,
+#translate-bar.error #translate-status .edit-thinking {
+	display: none;
+}
+
+#translate-bar.error #translate-status {
+	color: var(--vscode-errorForeground, #f48771);
+}
+
+#translate-content {
+	display: none;
+	padding: 8px 10px;
+	font-size: 0.9em;
+	line-height: 1.45;
+	max-height: 320px;
+	overflow-y: auto;
+	white-space: pre-wrap;
+	word-wrap: break-word;
+	user-select: text;
+}
+
+#translate-bar.done #translate-content {
+	display: block;
 }
 
 /* ── Clickable blocks ── */

@@ -68,6 +68,11 @@
           "type": "boolean",
           "default": true,
           "description": "Show the floating action bar (Claude / Find in source) when text is selected in the preview."
+        },
+        "ask-markdown.outputLanguage": {
+          "type": "string",
+          "default": "en",
+          "description": "ISO language code used as the output language for the Translate action (e.g. \"en\", \"ja\", \"zh\", \"fr\"). Selected text is explained literally in this language, not as code."
         }
       }
     }
