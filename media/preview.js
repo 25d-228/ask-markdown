@@ -276,13 +276,15 @@
 	function selectInTextarea(startLine, endLine) {
 		var text = sourceTextarea.value;
 		var lines = text.split('\n');
+		startLine = Math.max(1, startLine | 0);
+		endLine = Math.max(startLine, endLine | 0);
 		var startPos = 0;
 		for (var i = 0; i < Math.min(startLine - 1, lines.length); i++) {
 			startPos += lines[i].length + 1;
 		}
 		var endPos = startPos;
 		for (
-			var j = Math.max(0, startLine - 1);
+			var j = startLine - 1;
 			j < Math.min(endLine, lines.length);
 			j++
 		) {
@@ -1113,11 +1115,19 @@
 		if (navigator.clipboard && navigator.clipboard.writeText) {
 			navigator.clipboard.writeText(text).then(function () {
 				btn.innerHTML = ICON_CHECK;
+				btn.title = 'Copied';
 				setTimeout(function () {
 					btn.innerHTML = ICON_COPY;
+					btn.title = 'Copy code';
 				}, 2000);
 			}).catch(function () {
 				btn.innerHTML = ICON_COPY;
+				btn.classList.add('copy-failed');
+				btn.title = 'Copy failed';
+				setTimeout(function () {
+					btn.classList.remove('copy-failed');
+					btn.title = 'Copy code';
+				}, 2000);
 			});
 		}
 	});

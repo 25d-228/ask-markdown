@@ -150,6 +150,13 @@ pre code {
 	border-color: var(--vscode-button-background, #0e639c);
 }
 
+.copy-btn.copy-failed {
+	opacity: 1 !important;
+	background: var(--vscode-inputValidation-errorBackground, #5a1d1d);
+	color: var(--vscode-inputValidation-errorForeground, #fff);
+	border-color: var(--vscode-inputValidation-errorBorder, #be1100);
+}
+
 hr {
 	border: 0;
 	border-top: 1px solid var(--vscode-panel-border);
