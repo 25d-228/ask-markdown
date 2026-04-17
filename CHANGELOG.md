@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.3.17 - 2026-04-17
+
+- Clean up stale Ask Markdown lock files in `~/.claude/ide/` on startup so `/ide` no longer lists dead instances
+- Show a red "Copy failed" state on the code-block copy button when the clipboard write is rejected, and update the tooltip to reflect Copied / Copy failed / Copy code
+- Wrap the selected text in `<selection>` tags in the inline-edit prompt sent to Claude
+- Surface the tail of Claude's stdout in the inline-edit error toast when the process exits non-zero with empty stderr
+- Open the target in the default editor directly when clicking Edit (no longer tries the built-in Markdown preview editor first)
+- Drop the workspace-wide `<stem>.md` fallback when resolving preview tab labels to a markdown URI
+
 ## 0.3.16 - 2026-04-17
 
 - Update README to reflect the Add / Inline Edit / Translate toolbar, code-block copy button, and `translateEnabled` setting; drop the stale double-click-to-jump entry
