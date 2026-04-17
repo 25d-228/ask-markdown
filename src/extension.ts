@@ -151,18 +151,6 @@ export function activate(context: vscode.ExtensionContext) {
 			}
 		}
 
-		const stemMatch = labelLower.match(/([a-z0-9._+-]{2,})/);
-		if (stemMatch) {
-			const hits = await vscode.workspace.findFiles(
-				`**/${escapeGlob(stemMatch[1])}.md`,
-				'**/node_modules/**',
-				5,
-			);
-			if (hits.length > 0) {
-				return hits[0];
-			}
-		}
-
 		return undefined;
 	};
 
