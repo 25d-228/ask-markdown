@@ -83,6 +83,51 @@ function removeLockFile(port: number): void {
 	}
 }
 
+// Remove lock files left behind by crashed Ask Markdown instances. We only
+// touch files whose `ideName` identifies them as ours, and only when the
+// recorded pid is no longer alive.
+function cleanStaleLockFiles(): void {
+	let entries: string[];
+	try {
+		entries = fs.readdirSync(LOCK_DIR);
+	} catch {
+		return;
+	}
+	for (const entry of entries) {
+		if (!entry.endsWith('.lock')) {
+			continue;
+		}
+		const fullPath = path.join(LOCK_DIR, entry);
+		let data: LockFile;
+		try {
+			data = JSON.parse(fs.readFileSync(fullPath, 'utf8'));
+		} catch {
+			continue;
+		}
+		if (data.ideName !== 'Ask Markdown' || typeof data.pid !== 'number') {
+			continue;
+		}
+		let alive = false;
+		try {
+			process.kill(data.pid, 0);
+			alive = true;
+		} catch (err) {
+			// EPERM means the pid exists but we lack permission to signal it.
+			if ((err as NodeJS.ErrnoException).code === 'EPERM') {
+				alive = true;
+			}
+		}
+		if (alive) {
+			continue;
+		}
+		try {
+			fs.unlinkSync(fullPath);
+		} catch {
+			// ignore
+		}
+	}
+}
+
 const MARKDOWN_VIEW_TYPE = 'askMarkdown.preview';
 
 function handleToolsList(): unknown {
@@ -501,7 +546,7 @@ async function handleToolCall(
 					const input = t.input as { uri?: vscode.Uri } | undefined;
 					return input?.uri?.fsPath;
 				})
-				.filter(Boolean),
+				.filter((p): p is string => typeof p === 'string' && p.length > 0),
 		);
 		return {
 			content: [{ type: 'text', text: JSON.stringify(tabs) }],
@@ -600,6 +645,8 @@ export function startServer(): Promise<number> {
 		}
 
 		authToken = generateAuthToken();
+
+		cleanStaleLockFiles();
 
 		const server = http.createServer();
 		wss = new WebSocketServer({ noServer: true });
