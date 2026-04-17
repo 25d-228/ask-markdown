@@ -586,8 +586,8 @@ export class AskMarkdownEditorProvider implements vscode.CustomTextEditorProvide
 
 					const prompt =
 						`File to edit: ${tempPath}\n` +
-						`Lines ${startLine}-${endLine} (1-based, inclusive) currently contain:\n\n` +
-						`${selectedText}\n\n` +
+						`Lines ${startLine}-${endLine} (1-based, inclusive) currently contain the text between the <selection> tags below:\n\n` +
+						`<selection>\n${selectedText}\n</selection>\n\n` +
 						`User instruction: ${instruction}\n\n` +
 						'Use your Edit tool to apply the instruction to the selected lines in the file. ' +
 						'Read the file first if you need surrounding context to make the old_string unique. ' +
@@ -606,9 +606,15 @@ export class AskMarkdownEditorProvider implements vscode.CustomTextEditorProvide
 					inlineEditProc = proc;
 
 					const errChunks: Buffer[] = [];
+					// Keep the tail of stdout so we can surface Claude's own
+					// complaint when exit is non-zero and stderr is empty.
+					const stdoutTailLimit = 4096;
+					let stdoutTail = '';
 
-					proc.stdout!.on('data', () => {
-						// Discard claude's chatter; the result is on disk.
+					proc.stdout!.on('data', (data: Buffer) => {
+						stdoutTail = (stdoutTail + data.toString()).slice(
+							-stdoutTailLimit,
+						);
 					});
 					proc.stderr!.on('data', (data: Buffer) => {
 						errChunks.push(data);
@@ -630,10 +636,11 @@ export class AskMarkdownEditorProvider implements vscode.CustomTextEditorProvide
 							const stderr = Buffer.concat(errChunks)
 								.toString()
 								.trim();
+							const detail = stderr || stdoutTail.trim();
 							cleanup();
 							webviewPanel.webview.postMessage({
 								type: 'inlineEditError',
-								error: `Claude exited with code ${code}${stderr ? ': ' + stderr : ''}`,
+								error: `Claude exited with code ${code}${detail ? ': ' + detail : ''}`,
 							});
 							return;
 						}
@@ -776,26 +783,12 @@ export class AskMarkdownEditorProvider implements vscode.CustomTextEditorProvide
 					const viewColumn =
 						webviewPanel.viewColumn ??
 						vscode.ViewColumn.Active;
-					let opened = false;
-					try {
-						await vscode.commands.executeCommand(
-							'vscode.openWith',
-							document.uri,
-							'vscode.markdown.preview.editor',
-							viewColumn,
-						);
-						opened = true;
-					} catch {
-						// Markdown editor not available
-					}
-					if (!opened) {
-						await vscode.commands.executeCommand(
-							'vscode.openWith',
-							document.uri,
-							'default',
-							viewColumn,
-						);
-					}
+					await vscode.commands.executeCommand(
+						'vscode.openWith',
+						document.uri,
+						'default',
+						viewColumn,
+					);
 					try {
 						webviewPanel.dispose();
 					} catch {
