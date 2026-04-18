@@ -4,6 +4,8 @@ Distilled notes on how [anomalyco/opencode](https://github.com/anomalyco/opencod
 
 The Codex integration lives in [`packages/opencode/src/plugin/codex.ts`](https://github.com/anomalyco/opencode/blob/dev/packages/opencode/src/plugin/codex.ts). The Claude integration is spread across the generic provider system — there is no Claude-specific plugin at all, which is the point. The opencode-claude-auth plugin adds ~1200 lines of protocol compliance to use Claude Code's OAuth tokens instead of an API key — the Claude equivalent of the Codex plugin.
 
+A note on framing before we dive in: the Codex CLI is itself open source under Apache-2.0 at [`openai/codex`](https://github.com/openai/codex). The OAuth flow, `client_id`, PKCE parameters, and `/backend-api/codex/responses` endpoint that opencode uses are **copied from that published implementation**, not recovered by reverse-engineering a black box. The word "reverse-engineering" in this document is reserved for places where it's actually accurate — notably §24, where the opencode-claude-auth plugin reconstructs Claude Code's closed-source `K19()` billing-header signing scheme from a shipped binary. Everything in Part I is better described as *reimplementation of a documented, licensed client*.
+
 ---
 
 ## Contents
@@ -58,7 +60,7 @@ The Codex integration lives in [`packages/opencode/src/plugin/codex.ts`](https:/
 
 OpenAI's public API lives at `https://api.openai.com/v1/responses` and requires a billed `sk-...` API key. The **ChatGPT product** lives at `https://chatgpt.com/backend-api/...` and is authenticated by the same OAuth session that `chat.openai.com` uses. Codex CLI is an official OpenAI client for that second world — it logs you in with the ChatGPT Pro account, gets an access token, and talks to `https://chatgpt.com/backend-api/codex/responses`. The endpoint accepts *almost* the same JSON body as the public Responses API — there are a few extra headers and a couple of forbidden fields, but structurally it's the same.
 
-opencode reproduces Codex CLI's behavior entirely client-side. It:
+opencode mirrors the published Codex CLI behavior entirely client-side. The constants in §2 (client_id, endpoint, authorize params, port) are taken verbatim from [`openai/codex`](https://github.com/openai/codex) rather than discovered. opencode:
 
 1. Runs the **same OAuth PKCE flow** against `auth.openai.com` that the official Codex CLI uses, with the same `client_id` and the same `codex_cli_simplified_flow=true` authorize param.
 2. Stores `{refresh, access, expires, accountId}` in a local JSON file.
