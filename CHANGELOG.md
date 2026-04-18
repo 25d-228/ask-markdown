@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.3.18 - 2026-04-18
+
+- Add a **PDF** toolbar button with four print-style presets (Clean, GitHub, Academic, Keep Theme) that drives the browser print dialog for "Save as PDF"
+- Make links in the preview clickable — fragment links (`#heading`) scroll in place, relative `.md` paths open in Ask Markdown, everything else opens externally via the host
+- Ctrl/Cmd-click on links in the source editor to follow them
+- Generate GitHub-style heading slug IDs so fragment links resolve against rendered headings
+- Rename the "Edit" toolbar button to "Open in Editor"
+- Suppress the selection action bar after dismissing the translate bar until the user makes a new selection
+- Refresh the extension icon
+
 ## 0.3.17 - 2026-04-17
 
 - Clean up stale Ask Markdown lock files in `~/.claude/ide/` on startup so `/ide` no longer lists dead instances
