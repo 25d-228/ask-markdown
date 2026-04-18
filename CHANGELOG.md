@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.3.21 - 2026-04-18
+
+- Render the translate bar with structured rows — IPA on top and a part-of-speech × definition grid — instead of a plain text block
+- Suppress the selection action bar after Find in source / Find in preview jumps until the user takes a fresh mouse or key input, so the programmatic selection in the target view doesn't re-open the bar
+
+## 0.3.20 - 2026-04-18
+
+- Convert 1-based preview selection line numbers to 0-based LSP positions before broadcasting `askClaude` requests, so the @-mention range Claude renders matches the selection
+- Drop the phantom trailing line that triple-click / line-select picks up past the last newline, so "one line selected" reports one line
+
+## 0.3.19 - 2026-04-18
+
+- Render PDF exports via a locally installed Chromium-based browser (Chrome, Chromium, Edge, or Brave) instead of relying on the webview print dialog
+- Report fine-grained line ranges when selecting inside a table (per-row) or a fenced code block (per-line), rather than always sending the whole block
+- Fix an off-by-one in preview selection line ranges caused by markdown-it including trailing blank lines in paragraph source maps
+- Drop the "Open in Editor" toolbar button
+
 ## 0.3.18 - 2026-04-18
 
 - Add a **PDF** toolbar button with four print-style presets (Clean, GitHub, Academic, Keep Theme) that drives the browser print dialog for "Save as PDF"
