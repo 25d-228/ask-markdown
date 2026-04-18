@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.3.22 - 2026-04-18
+
+- Fix source-mode scroll drift where the syntax-highlighted layer moved at a different range than the textarea — the highlight renderer was appending an extra trailing newline on top of the one `split('\n')` already reconstructs, making the highlight div one line taller than the textarea and causing the visible text to slide out of alignment with the cursor and selection during scroll
+
 ## 0.3.21 - 2026-04-18
 
 - Render the translate bar with structured rows — IPA on top and a part-of-speech × definition grid — instead of a plain text block
