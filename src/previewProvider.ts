@@ -330,10 +330,24 @@ function pickIPA(entry: DictionaryEntry): string {
 	return entry.phonetic ?? '';
 }
 
-function formatDictionaryEntry(data: unknown, word: string): string {
+interface DictionaryRow {
+	pos: string;
+	definition: string;
+}
+
+interface FormattedDictionaryEntry {
+	ipa: string;
+	rows: DictionaryRow[];
+	fallback?: string;
+}
+
+function formatDictionaryEntry(
+	data: unknown,
+	word: string,
+): FormattedDictionaryEntry {
 	const entries = Array.isArray(data) ? (data as DictionaryEntry[]) : [];
 	if (entries.length === 0) {
-		return `No entry found for "${word}".`;
+		return { ipa: '', rows: [], fallback: `No entry found for "${word}".` };
 	}
 
 	let ipa = '';
@@ -344,12 +358,7 @@ function formatDictionaryEntry(data: unknown, word: string): string {
 		}
 	}
 
-	const lines: string[] = [];
-	if (ipa) {
-		lines.push(ipa);
-		lines.push('');
-	}
-
+	const rows: DictionaryRow[] = [];
 	for (const entry of entries) {
 		const meanings = Array.isArray(entry.meanings) ? entry.meanings : [];
 		for (const meaning of meanings) {
@@ -363,18 +372,22 @@ function formatDictionaryEntry(data: unknown, word: string): string {
 					break;
 				}
 				if (def && typeof def.definition === 'string' && def.definition) {
-					lines.push(`${pos}: ${def.definition}`);
+					rows.push({ pos, definition: def.definition });
 					count++;
 				}
 			}
 		}
 	}
 
-	if (lines.length === 0 || (ipa && lines.length === 2)) {
-		lines.push(`No definitions available for "${word}".`);
+	if (rows.length === 0) {
+		return {
+			ipa,
+			rows: [],
+			fallback: `No definitions available for "${word}".`,
+		};
 	}
 
-	return lines.join('\n').trim();
+	return { ipa, rows };
 }
 
 function fileUrl(absolutePath: string): string {
@@ -773,8 +786,16 @@ export class AskMarkdownEditorProvider implements vscode.CustomTextEditorProvide
 						: startLine;
 					await revealInSourceEditor(document, startLine, endLine);
 				} else if (message.type === 'askClaude') {
-					const startLine = Number(message.startLine);
-					const endLine = Number(message.endLine);
+					// The webview reports 1-based inclusive lines, but Claude
+					// Code expects 0-based LSP-style positions (matching the
+					// selection_changed payload we already emit via
+					// syncSelection). Convert before broadcasting so the
+					// @-mention Claude renders matches the selected range.
+					const startLine = Math.max(
+						0,
+						Number(message.startLine) - 1,
+					);
+					const endLine = Math.max(0, Number(message.endLine) - 1);
 					if (!isConnected()) {
 						vscode.window.showWarningMessage(
 							'Ask Markdown: No Claude CLI connected. Run "claude" in a terminal first.',
@@ -1092,7 +1113,9 @@ export class AskMarkdownEditorProvider implements vscode.CustomTextEditorProvide
 									);
 									webviewPanel.webview.postMessage({
 										type: 'translateResult',
-										result: formatted,
+										ipa: formatted.ipa,
+										rows: formatted.rows,
+										fallback: formatted.fallback,
 										language: 'en',
 										streaming: false,
 									});

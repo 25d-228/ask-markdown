@@ -305,6 +305,16 @@
 
 		var startLine = text.substring(0, start).split('\n').length;
 		var endLine = text.substring(0, end).split('\n').length;
+		// Triple-click / line-select commonly extends the selection past
+		// the trailing newline of the last visible line. Drop that phantom
+		// line so a "one line selected" really reports one line.
+		if (
+			end > start &&
+			text.charCodeAt(end - 1) === 10 &&
+			endLine > startLine
+		) {
+			endLine--;
+		}
 
 		return {
 			text: selected,
@@ -643,6 +653,10 @@
 	// until the user actually re-selects (a different range, or the same
 	// range after deselecting first).
 	var blockedSelection = null;
+	// Find-in-source / find-in-preview programmatically sets a selection in
+	// the target view. We want the selection visible but not the action bar,
+	// until the user takes a fresh input action.
+	var suppressBarUntilInteraction = false;
 	var lastMouseX = 0;
 	var lastMouseY = 0;
 
@@ -653,6 +667,10 @@
 
 	function showBar() {
 		if (bar.dataset.enabled === 'false') {
+			return;
+		}
+
+		if (suppressBarUntilInteraction) {
 			return;
 		}
 
@@ -705,6 +723,7 @@
 	function hideBar() {
 		bar.style.display = 'none';
 		blockedSelection = null;
+		suppressBarUntilInteraction = false;
 		if (currentRange) {
 			vscode.postMessage({ type: 'previewSelectionCleared' });
 			currentRange = null;
@@ -739,8 +758,20 @@
 			} else {
 				switchToPreview(sel.startLine, true, sel);
 			}
+			// switchTo* calls hideBar() internally, which resets the flag.
+			// Set it after so the selection events that follow in the target
+			// view don't re-open the action bar.
+			suppressBarUntilInteraction = true;
+			return;
 		}
 		hideBar();
+	});
+
+	document.addEventListener('mousedown', function () {
+		suppressBarUntilInteraction = false;
+	});
+	document.addEventListener('keydown', function () {
+		suppressBarUntilInteraction = false;
 	});
 
 	// ── Inline edit bar ──
@@ -1218,8 +1249,41 @@
 				translateLang.textContent = '(' + msg.language + ')';
 			}
 			if (translateContent) {
-				translateContent.textContent =
-					typeof msg.result === 'string' ? msg.result : '';
+				translateContent.textContent = '';
+				var ipa = typeof msg.ipa === 'string' ? msg.ipa : '';
+				if (ipa) {
+					var ipaEl = document.createElement('div');
+					ipaEl.className = 'tx-ipa';
+					ipaEl.textContent = ipa;
+					translateContent.appendChild(ipaEl);
+				}
+				var rows = Array.isArray(msg.rows) ? msg.rows : [];
+				if (rows.length) {
+					var grid = document.createElement('div');
+					grid.className = 'tx-grid';
+					for (var i = 0; i < rows.length; i++) {
+						var row = rows[i] || {};
+						var posEl = document.createElement('div');
+						posEl.className = 'tx-pos';
+						posEl.textContent =
+							typeof row.pos === 'string' ? row.pos : '';
+						var defEl = document.createElement('div');
+						defEl.className = 'tx-def';
+						defEl.textContent =
+							typeof row.definition === 'string'
+								? row.definition
+								: '';
+						grid.appendChild(posEl);
+						grid.appendChild(defEl);
+					}
+					translateContent.appendChild(grid);
+				}
+				if (typeof msg.fallback === 'string' && msg.fallback) {
+					var fb = document.createElement('div');
+					fb.className = 'tx-fallback';
+					fb.textContent = msg.fallback;
+					translateContent.appendChild(fb);
+				}
 			}
 			if (firstChunk) {
 				positionTranslateBar();
