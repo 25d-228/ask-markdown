@@ -4,9 +4,9 @@ A VS Code / Cursor extension that renders markdown files with LaTeX support. Sel
 
 ## Features
 
-- **Rendered preview** — `.md` files open in a rendered preview. Click **Open in Editor** to open in your default editor.
+- **Rendered preview** — `.md` files open in a rendered preview.
 - **Inline source editor** — The `</>` button toggles a syntax-highlighted, editable source view with line numbers. Edits sync back to the file in real time.
-- **PDF export** — The **PDF** toolbar button opens a menu with four print styles (Clean, GitHub, Academic, Keep Theme). Pick one and choose **Save as PDF** in the print dialog.
+- **PDF export** — The **PDF** toolbar button opens a menu with four styles (Clean, GitHub, Academic, Keep Theme). Pick a style and an output path; the extension renders the PDF using a locally installed Chromium-based browser (Chrome, Chromium, Edge, or Brave).
 - **LaTeX** — Inline `$...$` and display `$$...$$` math via KaTeX.
 - **Syntax highlighting** — Fenced code blocks are highlighted using `highlight.js`, with colors that match your VS Code theme.
 - **Selection action bar** — Select text to get a floating toolbar with **Add** (send to Claude Code), **Inline Edit** (rewrite via Claude), **Translate** (English dictionary lookup with IPA), and **Find in source**.
@@ -54,6 +54,7 @@ This is not needed when running Claude Code from an external terminal (outside C
 
 - VS Code 1.85+ or Cursor
 - [Claude Code](https://docs.anthropic.com/en/docs/claude-code) CLI
+- Google Chrome, Chromium, Microsoft Edge, or Brave — only for **PDF export**
 
 ## Extension settings
 

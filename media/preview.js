@@ -27,7 +27,6 @@
 	var sourceHighlight = document.getElementById('source-highlight');
 	var sourceTextarea = document.getElementById('source-editor');
 	var toolbar = document.getElementById('toolbar');
-	var editBtn = document.getElementById('edit-btn');
 	var toggleBtn = document.getElementById('toggle-source');
 	var exportPdfBtn = document.getElementById('export-pdf');
 	var bar = document.getElementById('ask-bar');
@@ -214,6 +213,40 @@
 		return el || null;
 	}
 
+	/**
+	 * If `sourceEl` is a `<code>` inside a `<pre>` (a fenced code block), the
+	 * whole block carries a single `data-source-line` attribute. Refine the
+	 * endpoint to its actual source line by counting newlines between the
+	 * start of the <code> and (node, offset). Returns null for anything
+	 * else, so callers can fall back to block-level attributes.
+	 */
+	function refineFenceLine(sourceEl, node, offset) {
+		if (
+			!sourceEl ||
+			sourceEl.tagName !== 'CODE' ||
+			!sourceEl.parentElement ||
+			sourceEl.parentElement.tagName !== 'PRE'
+		) {
+			return null;
+		}
+		if (!node || !sourceEl.contains(node)) {
+			return null;
+		}
+		var r = document.createRange();
+		r.setStart(sourceEl, 0);
+		r.setEnd(node, offset);
+		var prefix = r.toString();
+		var lineOffset = 0;
+		for (var i = 0; i < prefix.length; i++) {
+			if (prefix.charCodeAt(i) === 10) {
+				lineOffset++;
+			}
+		}
+		// dataset.sourceLine is the opening ``` line; +1 reaches the first
+		// line of content inside the fence.
+		return Number(sourceEl.dataset.sourceLine) + 1 + lineOffset;
+	}
+
 	/** Selection range from preview mode (DOM-based). */
 	function previewSelectionRange() {
 		var sel = window.getSelection();
@@ -237,6 +270,17 @@
 		var aEnd = Number(a.dataset.sourceLineEnd || a.dataset.sourceLine);
 		var bStart = Number(b.dataset.sourceLine);
 		var bEnd = Number(b.dataset.sourceLineEnd || b.dataset.sourceLine);
+
+		var aRefined = refineFenceLine(a, sel.anchorNode, sel.anchorOffset);
+		if (aRefined !== null) {
+			aStart = aRefined;
+			aEnd = aRefined;
+		}
+		var bRefined = refineFenceLine(b, sel.focusNode, sel.focusOffset);
+		if (bRefined !== null) {
+			bStart = bRefined;
+			bEnd = bRefined;
+		}
 
 		return {
 			text: text,
@@ -510,11 +554,6 @@
 
 	// ── Toolbar events ──
 
-	editBtn.addEventListener('click', function () {
-		flushPendingEdit();
-		vscode.postMessage({ type: 'openExternalEditor' });
-	});
-
 	toggleBtn.addEventListener('click', function () {
 		var line = topVisibleLine();
 		if (mode === 'preview') {
@@ -548,32 +587,7 @@
 	}
 
 	function runPdfExport(style) {
-		var cls = 'pdf-style-' + style;
-		document.body.classList.add(cls);
-		var cleanup = function () {
-			document.body.classList.remove(cls);
-			window.removeEventListener('afterprint', cleanup);
-		};
-		window.addEventListener('afterprint', cleanup);
-		// Fallback in case afterprint never fires (some environments).
-		setTimeout(function () {
-			document.body.classList.remove(cls);
-		}, 60000);
-
-		var doPrint = function () {
-			requestAnimationFrame(function () {
-				requestAnimationFrame(function () {
-					window.print();
-				});
-			});
-		};
-
-		if (mode !== 'preview') {
-			switchToPreview(topVisibleLine(), false);
-			doPrint();
-		} else {
-			doPrint();
-		}
+		vscode.postMessage({ type: 'exportPdf', style: style });
 	}
 
 	if (exportPdfBtn && exportPdfMenu) {

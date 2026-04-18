@@ -189,7 +189,7 @@ img {
 	color: inherit;
 }
 
-/* ── Toolbar (Open in Editor + </> + PDF) ── */
+/* ── Toolbar (</> + PDF) ── */
 
 #toolbar {
 	display: flex;
@@ -210,13 +210,6 @@ img {
 	font-size: 0.85em;
 	opacity: 0.6;
 	transition: opacity 0.15s, background 0.15s, border-color 0.15s, color 0.15s;
-}
-
-#edit-btn:hover {
-	background: #2ea043;
-	border-color: #2ea043;
-	color: #fff;
-	opacity: 1;
 }
 
 #toggle-source:hover {
