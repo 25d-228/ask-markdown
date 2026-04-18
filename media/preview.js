@@ -187,11 +187,6 @@
 			}
 		}
 
-		// Must end with a newline so the highlight div matches the textarea height
-		if (text.length > 0 && text[text.length - 1] === '\n') {
-			html += '\n';
-		}
-
 		return html;
 	}
 
