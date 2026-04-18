@@ -189,7 +189,7 @@ img {
 	color: inherit;
 }
 
-/* ── Toolbar (Edit + </>) ── */
+/* ── Toolbar (Open in Editor + </> + PDF) ── */
 
 #toolbar {
 	display: flex;
@@ -236,6 +236,270 @@ img {
 #toggle-source.active:hover {
 	background: #388bfd;
 	border-color: #388bfd;
+}
+
+#export-pdf:hover {
+	background: #d84a4a;
+	border-color: #d84a4a;
+	color: #fff;
+	opacity: 1;
+}
+
+/* ── PDF export menu ── */
+
+#export-pdf-wrap {
+	position: relative;
+	display: inline-block;
+}
+
+#export-pdf-menu {
+	position: absolute;
+	top: calc(100% + 4px);
+	right: 0;
+	z-index: 50;
+	min-width: 260px;
+	padding: 4px;
+	background: var(--vscode-menu-background, var(--vscode-editorWidget-background, #252526));
+	color: var(--vscode-menu-foreground, var(--vscode-editor-foreground));
+	border: 1px solid var(--vscode-menu-border, var(--vscode-editorWidget-border, #454545));
+	border-radius: 6px;
+	box-shadow: 0 6px 20px rgba(0, 0, 0, 0.35);
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+}
+
+#export-pdf-menu[hidden] {
+	display: none;
+}
+
+#export-pdf-menu button[role="menuitem"] {
+	display: flex;
+	flex-direction: column;
+	align-items: flex-start;
+	gap: 2px;
+	padding: 8px 10px;
+	background: transparent;
+	border: 1px solid transparent;
+	border-radius: 4px;
+	color: inherit;
+	font-family: var(--vscode-font-family);
+	font-size: 0.85em;
+	text-align: left;
+	cursor: pointer;
+}
+
+#export-pdf-menu button[role="menuitem"]:hover {
+	background: var(--vscode-menu-selectionBackground, #094771);
+	color: var(--vscode-menu-selectionForeground, #fff);
+}
+
+#export-pdf-menu .pdf-menu-title {
+	font-weight: 600;
+}
+
+#export-pdf-menu .pdf-menu-sub {
+	font-size: 0.82em;
+	opacity: 0.7;
+}
+
+/* ── Print: always hide chrome; per-style blocks restyle the page. ── */
+
+@media print {
+	#toolbar,
+	#ask-bar,
+	#edit-bar,
+	#translate-bar,
+	#source-view,
+	.copy-btn {
+		display: none !important;
+	}
+
+	#app, #view-container, #content-scroll {
+		position: static !important;
+		overflow: visible !important;
+		height: auto !important;
+	}
+
+	#content {
+		max-width: none !important;
+	}
+}
+
+/* ── Preset 1: Clean — white bg, minimal, printer-friendly. ── */
+
+@media print {
+	body.pdf-style-clean {
+		background: #fff !important;
+		color: #000 !important;
+		font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif !important;
+		font-size: 11pt !important;
+		line-height: 1.5 !important;
+	}
+	body.pdf-style-clean #content {
+		padding: 0 !important;
+	}
+	body.pdf-style-clean h1,
+	body.pdf-style-clean h2,
+	body.pdf-style-clean h3,
+	body.pdf-style-clean h4,
+	body.pdf-style-clean h5,
+	body.pdf-style-clean h6 {
+		color: #000 !important;
+		border: none !important;
+		break-after: avoid;
+	}
+	body.pdf-style-clean a {
+		color: #000 !important;
+		text-decoration: underline !important;
+	}
+	body.pdf-style-clean pre,
+	body.pdf-style-clean code {
+		background: #f5f5f5 !important;
+		color: #000 !important;
+		border: none !important;
+	}
+	body.pdf-style-clean table,
+	body.pdf-style-clean th,
+	body.pdf-style-clean td {
+		border: 1px solid #000 !important;
+		border-collapse: collapse;
+	}
+	body.pdf-style-clean blockquote {
+		border-left: 3px solid #000 !important;
+		color: #000 !important;
+	}
+}
+@page { margin: 2cm; }
+
+/* ── Preset 2: GitHub — README-style. ── */
+
+@media print {
+	body.pdf-style-github {
+		background: #fff !important;
+		color: #24292f !important;
+		font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif !important;
+		font-size: 11pt !important;
+		line-height: 1.5 !important;
+	}
+	body.pdf-style-github #content {
+		padding: 0 !important;
+	}
+	body.pdf-style-github h1,
+	body.pdf-style-github h2 {
+		color: #1f2328 !important;
+		border-bottom: 1px solid #d1d9e0 !important;
+		padding-bottom: 0.3em;
+		break-after: avoid;
+	}
+	body.pdf-style-github h3,
+	body.pdf-style-github h4,
+	body.pdf-style-github h5,
+	body.pdf-style-github h6 {
+		color: #1f2328 !important;
+		break-after: avoid;
+	}
+	body.pdf-style-github a {
+		color: #0969da !important;
+		text-decoration: none !important;
+	}
+	body.pdf-style-github pre {
+		background: #f6f8fa !important;
+		color: #1f2328 !important;
+		border: 1px solid #d1d9e0 !important;
+		border-radius: 6px;
+		padding: 12px !important;
+	}
+	body.pdf-style-github :not(pre) > code {
+		background: rgba(175, 184, 193, 0.2) !important;
+		color: #1f2328 !important;
+		padding: 0.2em 0.4em;
+		border-radius: 4px;
+	}
+	body.pdf-style-github blockquote {
+		border-left: 4px solid #d1d9e0 !important;
+		color: #656d76 !important;
+		padding-left: 1em;
+	}
+	body.pdf-style-github table {
+		border-collapse: collapse;
+	}
+	body.pdf-style-github th,
+	body.pdf-style-github td {
+		border: 1px solid #d1d9e0 !important;
+		padding: 6px 12px;
+	}
+	body.pdf-style-github tr:nth-child(even) td {
+		background: #f6f8fa !important;
+	}
+}
+
+/* ── Preset 3: Academic — serif, paper-like. ── */
+
+@media print {
+	body.pdf-style-academic {
+		background: #fafafa !important;
+		color: #1a1a1a !important;
+		font-family: Georgia, "Charter", "Source Serif Pro", "Times New Roman", serif !important;
+		font-size: 11pt !important;
+		line-height: 1.7 !important;
+	}
+	body.pdf-style-academic #content {
+		padding: 0 !important;
+	}
+	body.pdf-style-academic h1,
+	body.pdf-style-academic h2,
+	body.pdf-style-academic h3,
+	body.pdf-style-academic h4,
+	body.pdf-style-academic h5,
+	body.pdf-style-academic h6 {
+		font-family: inherit !important;
+		color: #1a1a1a !important;
+		border: none !important;
+		break-after: avoid;
+	}
+	body.pdf-style-academic a {
+		color: #1a4a8a !important;
+		text-decoration: none !important;
+	}
+	body.pdf-style-academic pre,
+	body.pdf-style-academic code {
+		background: #f0f0f0 !important;
+		color: #1a1a1a !important;
+		font-size: 0.92em;
+	}
+	body.pdf-style-academic blockquote {
+		font-style: italic;
+		border-left: 3px solid #bbb !important;
+		color: #333 !important;
+		margin-left: 0;
+		padding-left: 1em;
+	}
+	body.pdf-style-academic table {
+		border-collapse: collapse;
+		margin: 1em auto;
+	}
+	body.pdf-style-academic th,
+	body.pdf-style-academic td {
+		border: none !important;
+		padding: 6px 12px;
+	}
+	body.pdf-style-academic thead th {
+		border-top: 1.5px solid #1a1a1a !important;
+		border-bottom: 1px solid #1a1a1a !important;
+	}
+	body.pdf-style-academic tbody tr:last-child td {
+		border-bottom: 1.5px solid #1a1a1a !important;
+	}
+}
+
+/* ── Preset 4: Keep Theme — no overrides; export what the user sees. ── */
+
+@media print {
+	body.pdf-style-theme {
+		background: var(--vscode-editor-background) !important;
+		color: var(--vscode-editor-foreground) !important;
+	}
 }
 
 /* ── Source editor (overlay: highlight div + transparent textarea) ── */

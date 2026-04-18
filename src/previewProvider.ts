@@ -75,6 +75,44 @@ export function createMarkdownIt(): MarkdownIt {
 		};
 	}
 
+	// GitHub-style heading slug: lowercase, strip punctuation, spaces → hyphens.
+	// Enables fragment links like `[...](#1-the-trick-in-one-paragraph)`.
+	const slugify = (text: string): string =>
+		text
+			.toLowerCase()
+			.replace(/[^\p{L}\p{N}\s_-]/gu, '')
+			.trim()
+			.replace(/\s+/g, '-');
+
+	{
+		const previous = md.renderer.rules['heading_open'];
+		const slugCounts = new WeakMap<Token[], Map<string, number>>();
+		md.renderer.rules['heading_open'] = (tokens, idx, options, env, self) => {
+			const inline = tokens[idx + 1];
+			if (
+				inline &&
+				inline.type === 'inline' &&
+				typeof inline.content === 'string'
+			) {
+				const base = slugify(inline.content);
+				if (base) {
+					let counts = slugCounts.get(tokens);
+					if (!counts) {
+						counts = new Map();
+						slugCounts.set(tokens, counts);
+					}
+					const n = counts.get(base) ?? 0;
+					counts.set(base, n + 1);
+					const slug = n === 0 ? base : `${base}-${n}`;
+					tokens[idx].attrJoin('id', slug);
+				}
+			}
+			return previous
+				? previous(tokens, idx, options, env, self)
+				: self.renderToken(tokens, idx, options);
+		};
+	}
+
 	{
 		const previous = md.renderer.rules['math_block'];
 		md.renderer.rules['math_block'] = (tokens, idx, options, env, self) => {
@@ -142,8 +180,29 @@ function buildHtml(
 <body>
 	<div id="app">
 		<div id="toolbar">
-			<button id="edit-btn" title="Open in external editor">Edit</button>
+			<button id="edit-btn" title="Open in the IDE's default text editor">Open in Editor</button>
 			<button id="toggle-source" title="Show Source">&lt;/&gt;</button>
+			<div id="export-pdf-wrap">
+				<button id="export-pdf" title="Export as PDF (choose &quot;Save as PDF&quot; in the print dialog)" aria-haspopup="menu" aria-expanded="false">PDF &#x25BE;</button>
+				<div id="export-pdf-menu" role="menu" hidden>
+					<button role="menuitem" data-pdf-style="clean">
+						<span class="pdf-menu-title">Clean</span>
+						<span class="pdf-menu-sub">White, minimal, printer-friendly</span>
+					</button>
+					<button role="menuitem" data-pdf-style="github">
+						<span class="pdf-menu-title">GitHub</span>
+						<span class="pdf-menu-sub">Sans-serif, subtle borders, README-style</span>
+					</button>
+					<button role="menuitem" data-pdf-style="academic">
+						<span class="pdf-menu-title">Academic</span>
+						<span class="pdf-menu-sub">Serif, off-white page, paper-like</span>
+					</button>
+					<button role="menuitem" data-pdf-style="theme">
+						<span class="pdf-menu-title">Keep Theme</span>
+						<span class="pdf-menu-sub">Export exactly what you see on screen</span>
+					</button>
+				</div>
+			</div>
 		</div>
 		<div id="view-container">
 			<div id="content-scroll">
@@ -778,6 +837,35 @@ export class AskMarkdownEditorProvider implements vscode.CustomTextEditorProvide
 					if (translateAbort) {
 						translateAbort.abort();
 						translateAbort = null;
+					}
+				} else if (message.type === 'openLink') {
+					const href =
+						typeof message.href === 'string' ? message.href : '';
+					if (!href) {
+						return;
+					}
+					let target: vscode.Uri | undefined;
+					try {
+						target = vscode.Uri.parse(href, true);
+					} catch {
+						target = undefined;
+					}
+					if (!target || !target.scheme) {
+						// Relative path — resolve against the document's directory.
+						const docDir = vscode.Uri.joinPath(document.uri, '..');
+						target = vscode.Uri.joinPath(docDir, href);
+					}
+					if (
+						target.scheme === 'file' &&
+						target.path.toLowerCase().endsWith('.md')
+					) {
+						await vscode.commands.executeCommand(
+							'vscode.openWith',
+							target,
+							AskMarkdownEditorProvider.viewType,
+						);
+					} else {
+						await vscode.env.openExternal(target);
 					}
 				} else if (message.type === 'openExternalEditor') {
 					const viewColumn =

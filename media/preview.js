@@ -29,6 +29,7 @@
 	var toolbar = document.getElementById('toolbar');
 	var editBtn = document.getElementById('edit-btn');
 	var toggleBtn = document.getElementById('toggle-source');
+	var exportPdfBtn = document.getElementById('export-pdf');
 	var bar = document.getElementById('ask-bar');
 	var findBtn = bar.querySelector('[data-action="find"]');
 	var editBar = document.getElementById('edit-bar');
@@ -523,6 +524,98 @@
 		}
 	});
 
+	// Export to PDF via the browser print dialog. VS Code's Electron shell
+	// exposes "Save as PDF" as a destination, so no extra dependency is
+	// needed. A small menu lets the user pick a preset print style; we
+	// tag the body with `pdf-style-<name>` so the @media print CSS can
+	// theme the output, then clear the tag once the dialog closes.
+	var exportPdfMenu = document.getElementById('export-pdf-menu');
+
+	function openPdfMenu() {
+		if (!exportPdfMenu) {
+			return;
+		}
+		exportPdfMenu.hidden = false;
+		exportPdfBtn.setAttribute('aria-expanded', 'true');
+	}
+
+	function closePdfMenu() {
+		if (!exportPdfMenu) {
+			return;
+		}
+		exportPdfMenu.hidden = true;
+		exportPdfBtn.setAttribute('aria-expanded', 'false');
+	}
+
+	function runPdfExport(style) {
+		var cls = 'pdf-style-' + style;
+		document.body.classList.add(cls);
+		var cleanup = function () {
+			document.body.classList.remove(cls);
+			window.removeEventListener('afterprint', cleanup);
+		};
+		window.addEventListener('afterprint', cleanup);
+		// Fallback in case afterprint never fires (some environments).
+		setTimeout(function () {
+			document.body.classList.remove(cls);
+		}, 60000);
+
+		var doPrint = function () {
+			requestAnimationFrame(function () {
+				requestAnimationFrame(function () {
+					window.print();
+				});
+			});
+		};
+
+		if (mode !== 'preview') {
+			switchToPreview(topVisibleLine(), false);
+			doPrint();
+		} else {
+			doPrint();
+		}
+	}
+
+	if (exportPdfBtn && exportPdfMenu) {
+		exportPdfBtn.addEventListener('click', function (e) {
+			e.stopPropagation();
+			if (exportPdfMenu.hidden) {
+				openPdfMenu();
+			} else {
+				closePdfMenu();
+			}
+		});
+
+		exportPdfMenu.addEventListener('click', function (e) {
+			var item = e.target.closest('[data-pdf-style]');
+			if (!item) {
+				return;
+			}
+			var style = item.getAttribute('data-pdf-style');
+			closePdfMenu();
+			runPdfExport(style);
+		});
+
+		document.addEventListener('mousedown', function (e) {
+			if (exportPdfMenu.hidden) {
+				return;
+			}
+			if (
+				exportPdfMenu.contains(e.target) ||
+				exportPdfBtn.contains(e.target)
+			) {
+				return;
+			}
+			closePdfMenu();
+		});
+
+		document.addEventListener('keydown', function (e) {
+			if (e.key === 'Escape' && !exportPdfMenu.hidden) {
+				closePdfMenu();
+			}
+		});
+	}
+
 	// ── Floating action bar ──
 
 	function updateBarLabels() {
@@ -531,6 +624,11 @@
 	}
 
 	var currentRange = null;
+	// When the translate bar is dismissed, the underlying text selection
+	// stays visible. Remember that selection so we can suppress the ask-bar
+	// until the user actually re-selects (a different range, or the same
+	// range after deselecting first).
+	var blockedSelection = null;
 	var lastMouseX = 0;
 	var lastMouseY = 0;
 
@@ -549,6 +647,16 @@
 			hideBar();
 			return;
 		}
+
+		if (
+			blockedSelection &&
+			currentRange.text === blockedSelection.text &&
+			currentRange.startLine === blockedSelection.startLine &&
+			currentRange.endLine === blockedSelection.endLine
+		) {
+			return;
+		}
+		blockedSelection = null;
 
 		// Sync selection to the extension host.
 		vscode.postMessage({
@@ -582,6 +690,7 @@
 
 	function hideBar() {
 		bar.style.display = 'none';
+		blockedSelection = null;
 		if (currentRange) {
 			vscode.postMessage({ type: 'previewSelectionCleared' });
 			currentRange = null;
@@ -833,6 +942,11 @@
 		translateBar.classList.remove('done');
 		translateBar.classList.remove('error');
 		if (translateRange) {
+			blockedSelection = {
+				text: translateRange.text,
+				startLine: translateRange.startLine,
+				endLine: translateRange.endLine,
+			};
 			vscode.postMessage({ type: 'previewSelectionCleared' });
 		}
 		translateRange = null;
@@ -920,11 +1034,81 @@
 		}
 	});
 
-	sourceTextarea.addEventListener('click', function () {
+	sourceTextarea.addEventListener('click', function (e) {
+		if (e.ctrlKey || e.metaKey) {
+			var pos = sourceTextarea.selectionStart;
+			var link = findLinkAtPosition(sourceTextarea.value, pos);
+			if (link) {
+				e.preventDefault();
+				openLink(link);
+				return;
+			}
+		}
 		if (sourceTextarea.selectionStart === sourceTextarea.selectionEnd) {
 			hideBar();
 		}
 	});
+
+	// ── Links ──
+
+	// Scrolls fragment links to their in-document target (switching to preview
+	// first if needed) and forwards everything else to the host for
+	// `vscode.env.openExternal`.
+	function openLink(href) {
+		if (!href) {
+			return;
+		}
+		if (href.charAt(0) === '#') {
+			var id = decodeURIComponent(href.substring(1));
+			var target = id
+				? contentEl.querySelector('#' + CSS.escape(id))
+				: null;
+			if (!target) {
+				return;
+			}
+			if (mode !== 'preview') {
+				switchToPreview();
+				requestAnimationFrame(function () {
+					target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+				});
+			} else {
+				target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+			}
+			return;
+		}
+		vscode.postMessage({ type: 'openLink', href: href });
+	}
+
+	// Locate a link surrounding `pos` in raw markdown source. Handles
+	// [text](url) markdown links, <url> autolinks, and bare http(s) URLs.
+	function findLinkAtPosition(text, pos) {
+		var mdLink = /\[[^\]\n]*\]\(([^)\n]+)\)/g;
+		var m;
+		while ((m = mdLink.exec(text)) !== null) {
+			var end = m.index + m[0].length;
+			if (pos >= m.index && pos <= end) {
+				var url = m[1].trim();
+				var sp = url.search(/\s/);
+				if (sp !== -1) {
+					url = url.substring(0, sp);
+				}
+				return url || null;
+			}
+		}
+		var autolink = /<((?:https?:\/\/|mailto:)[^>\s]+)>/g;
+		while ((m = autolink.exec(text)) !== null) {
+			if (pos >= m.index && pos <= m.index + m[0].length) {
+				return m[1];
+			}
+		}
+		var bare = /https?:\/\/[^\s)\]<>"']+/g;
+		while ((m = bare.exec(text)) !== null) {
+			if (pos >= m.index && pos <= m.index + m[0].length) {
+				return m[0];
+			}
+		}
+		return null;
+	}
 
 	// ── Scroll sync (host → webview) ──
 
@@ -1101,6 +1285,16 @@
 	}
 
 	contentEl.addEventListener('click', function (e) {
+		var anchor = e.target.closest('a[href]');
+		if (anchor) {
+			var href = anchor.getAttribute('href') || '';
+			if (href) {
+				e.preventDefault();
+				openLink(href);
+			}
+			return;
+		}
+
 		var btn = e.target.closest('.copy-btn');
 		if (!btn) {
 			return;
