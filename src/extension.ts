@@ -8,7 +8,7 @@ export function activate(context: vscode.ExtensionContext) {
 	const diag = vscode.window.createOutputChannel('Ask Markdown');
 	context.subscriptions.push(diag);
 
-	startServer().then((port) => {
+	startServer(context).then((port) => {
 		console.log(`[ask-markdown] Claude server ready on port ${port}`);
 	}).catch((err) => {
 		console.error('[ask-markdown] Failed to start Claude server:', err);

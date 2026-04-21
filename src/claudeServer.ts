@@ -5,6 +5,7 @@ import * as os from 'os';
 import * as crypto from 'crypto';
 import { WebSocketServer, WebSocket } from 'ws';
 import * as http from 'http';
+import { openRenderedMarkdownDiff } from './renderedDiff';
 
 const LOCK_DIR = path.join(os.homedir(), '.claude', 'ide');
 
@@ -39,6 +40,7 @@ let wss: WebSocketServer | null = null;
 let serverPort: number | null = null;
 let authToken: string | null = null;
 let latestSelection: LatestSelection | null = null;
+let extensionContext: vscode.ExtensionContext | null = null;
 const clients = new Set<WebSocket>();
 
 export function updateLatestSelection(sel: LatestSelection): void {
@@ -466,6 +468,35 @@ async function handleOpenDiff(
 		};
 	}
 
+	// Markdown files go through the Ask Markdown rendered diff: two webview
+	// panes showing old and new rendered side-by-side with line-level diff
+	// highlights, plus its own Accept/Reject controls. Fall through to the
+	// standard text diff for any other file type, and if the extension
+	// context hasn't been plumbed in (should never happen in practice).
+	if (extensionContext && /\.mdx?$/i.test(oldPath)) {
+		try {
+			const result = await openRenderedMarkdownDiff({
+				oldPath,
+				newContents,
+				tabName,
+				context: extensionContext,
+			});
+			return {
+				content: [{ type: 'text', text: result }],
+			};
+		} catch (err) {
+			return {
+				content: [
+					{
+						type: 'text',
+						text: `Error opening rendered diff: ${(err as Error).message}`,
+					},
+				],
+				isError: true,
+			};
+		}
+	}
+
 	// Ensure old file exists — create empty if missing so diff can open.
 	if (!fs.existsSync(oldPath)) {
 		try {
@@ -781,7 +812,10 @@ async function handleMessage(ws: WebSocket, data: string): Promise<void> {
 	}
 }
 
-export function startServer(): Promise<number> {
+export function startServer(
+	context: vscode.ExtensionContext,
+): Promise<number> {
+	extensionContext = context;
 	return new Promise((resolve, reject) => {
 		if (wss) {
 			resolve(serverPort!);
@@ -853,6 +887,7 @@ export function stopServer(): void {
 	serverPort = null;
 	authToken = null;
 	latestSelection = null;
+	extensionContext = null;
 }
 
 export function broadcast(method: string, params: unknown): boolean {
