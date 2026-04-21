@@ -981,17 +981,22 @@ img {
 
 /* ── Syntax highlighting – source overlay ── */
 
-.md-heading   { color: #569cd6; font-weight: bold; }
+/* Color-only — anything that changes character width (padding, bold,
+ * italic) would push highlighted spans out of alignment with the
+ * transparent textarea on top, which maps clicks via its own uniform
+ * font metrics. The result is a caret that lands several characters off
+ * whenever a line contains inline code, bold, italic, or headings. */
+.md-heading   { color: #569cd6; }
 .md-fence     { color: #808080; }
 .md-code-content { color: #ce9178; }
-.md-inline-code  { color: #ce9178; background: rgba(127,127,127,0.12); border-radius: 3px; padding: 0 2px; }
+.md-inline-code  { color: #ce9178; background: rgba(127,127,127,0.12); border-radius: 3px; }
 .md-link      { color: #4ec9b0; }
 .md-image     { color: #4ec9b0; }
 .md-blockquote { color: #6a9955; }
 .md-bullet    { color: #d7ba7d; }
 .md-hr        { color: #808080; }
-.md-bold      { font-weight: bold; }
-.md-italic    { font-style: italic; }
+.md-bold      { color: inherit; }
+.md-italic    { color: inherit; }
 
 body.vscode-light .md-heading      { color: #0000ff; }
 body.vscode-light .md-fence        { color: #808080; }
