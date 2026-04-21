@@ -1,6 +1,31 @@
 import * as vscode from 'vscode';
 import * as fs from 'fs';
+import * as path from 'path';
 import { createMarkdownIt } from './markdownRenderer';
+
+// Active rendered-diff panels keyed by the tab_name they were opened with.
+// claudeServer's close_tab / closeAllDiffTabs handlers reach these panels
+// through the helpers below so we don't depend on VS Code exposing our
+// webview's viewType in a shape isDiffTab can match — that string varies
+// by build.
+const activePanels = new Map<string, vscode.WebviewPanel>();
+
+export function disposeRenderedDiffByTabName(tabName: string): boolean {
+	const panel = activePanels.get(tabName);
+	if (!panel) {
+		return false;
+	}
+	panel.dispose();
+	return true;
+}
+
+export function disposeAllRenderedDiffs(): number {
+	const panels = Array.from(activePanels.values());
+	for (const p of panels) {
+		p.dispose();
+	}
+	return panels.length;
+}
 
 const md = createMarkdownIt();
 
@@ -206,6 +231,8 @@ export async function openRenderedMarkdownDiff(
 		},
 	);
 
+	activePanels.set(opts.tabName, panel);
+
 	const { removedLines, addedLines } = computeLineDiff(
 		oldContents,
 		opts.newContents,
@@ -223,23 +250,75 @@ export async function openRenderedMarkdownDiff(
 		},
 	);
 
-	// No in-webview Accept/Reject: the decision is driven from the Claude
-	// Code terminal. On accept, Claude writes the file (via its own Edit
-	// tool) and calls close_tab to dismiss this webview. On reject, Claude
-	// just calls close_tab without writing. Either way the panel disposes,
-	// at which point we compare the file on disk to the proposed contents:
-	// a match means Claude wrote it (FILE_SAVED), otherwise DIFF_REJECTED.
+	// Decision is driven from the Claude Code terminal. Accept: Claude
+	// writes the file; our watchers see the content match newContents and
+	// dispose the panel → FILE_SAVED. Reject: Claude calls close_tab
+	// (which dispatches to disposeRenderedDiffByTabName) without writing,
+	// and the content-mismatch on dispose yields DIFF_REJECTED.
 	return new Promise<DiffResult>((resolve) => {
 		let resolved = false;
+		const disposables: vscode.Disposable[] = [];
 		const finish = (result: DiffResult): void => {
 			if (resolved) {
 				return;
 			}
 			resolved = true;
+			for (const d of disposables) {
+				d.dispose();
+			}
 			resolve(result);
 		};
 
+		const tryResolveSave = (): void => {
+			if (resolved) {
+				return;
+			}
+			let current = '';
+			try {
+				current = fs.readFileSync(opts.oldPath, 'utf8');
+			} catch {
+				return;
+			}
+			if (current === opts.newContents) {
+				finish('FILE_SAVED');
+				panel.dispose();
+			}
+		};
+
+		disposables.push(
+			vscode.workspace.onDidChangeTextDocument((e) => {
+				if (e.document.uri.toString() === oldUri.toString()) {
+					tryResolveSave();
+				}
+			}),
+			vscode.workspace.onDidSaveTextDocument((doc) => {
+				if (doc.uri.toString() === oldUri.toString()) {
+					tryResolveSave();
+				}
+			}),
+		);
+
+		// File watcher catches writes that bypass VS Code's document model,
+		// e.g. Claude Code's Edit tool writing straight through fs.
+		const watcher = vscode.workspace.createFileSystemWatcher(
+			new vscode.RelativePattern(
+				vscode.Uri.file(path.dirname(opts.oldPath)),
+				path.basename(opts.oldPath),
+			),
+		);
+		disposables.push(
+			watcher,
+			watcher.onDidChange(tryResolveSave),
+			watcher.onDidCreate(tryResolveSave),
+		);
+
 		panel.onDidDispose(() => {
+			activePanels.delete(opts.tabName);
+			if (resolved) {
+				return;
+			}
+			// Last-chance check: a write may have landed right before
+			// dispose without a watcher event yet.
 			let current = '';
 			try {
 				current = fs.readFileSync(opts.oldPath, 'utf8');

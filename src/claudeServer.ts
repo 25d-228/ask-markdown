@@ -5,7 +5,11 @@ import * as os from 'os';
 import * as crypto from 'crypto';
 import { WebSocketServer, WebSocket } from 'ws';
 import * as http from 'http';
-import { openRenderedMarkdownDiff } from './renderedDiff';
+import {
+	disposeAllRenderedDiffs,
+	disposeRenderedDiffByTabName,
+	openRenderedMarkdownDiff,
+} from './renderedDiff';
 
 const LOCK_DIR = path.join(os.homedir(), '.claude', 'ide');
 
@@ -297,9 +301,15 @@ async function handleCloseTab(
 			isError: true,
 		};
 	}
-	// Scope to diff tabs. Claude Code passes the filename as tab_name, which
-	// collides with the label of any plain editor the user already had open
-	// for the same file — matching by label alone would close their tab too.
+	// Rendered-diff webviews are tracked by tab_name, so dispose those
+	// directly — more reliable than matching via TabInputWebview.viewType,
+	// which VS Code exposes inconsistently across builds.
+	const closedPanel = disposeRenderedDiffByTabName(tabName);
+
+	// Scope the tab-list scan to diff tabs. Claude Code passes the filename
+	// as tab_name, which collides with the label of any plain editor the
+	// user already had open for the same file — matching by label alone
+	// would close their tab too.
 	const toClose: vscode.Tab[] = [];
 	for (const group of vscode.window.tabGroups.all) {
 		for (const tab of group.tabs) {
@@ -308,7 +318,7 @@ async function handleCloseTab(
 			}
 		}
 	}
-	if (toClose.length === 0) {
+	if (toClose.length === 0 && !closedPanel) {
 		return {
 			content: [
 				{ type: 'text', text: `No tab found with name: ${tabName}` },
@@ -316,12 +326,15 @@ async function handleCloseTab(
 		};
 	}
 	try {
-		await vscode.window.tabGroups.close(toClose);
+		if (toClose.length > 0) {
+			await vscode.window.tabGroups.close(toClose);
+		}
+		const closedCount = toClose.length + (closedPanel ? 1 : 0);
 		return {
 			content: [
 				{
 					type: 'text',
-					text: `Closed ${toClose.length} tab(s) named "${tabName}"`,
+					text: `Closed ${closedCount} tab(s) named "${tabName}"`,
 				},
 			],
 		};
@@ -339,6 +352,7 @@ async function handleCloseTab(
 }
 
 async function handleCloseAllDiffTabs(): Promise<unknown> {
+	const closedPanels = disposeAllRenderedDiffs();
 	const toClose: vscode.Tab[] = [];
 	for (const group of vscode.window.tabGroups.all) {
 		for (const tab of group.tabs) {
@@ -347,18 +361,21 @@ async function handleCloseAllDiffTabs(): Promise<unknown> {
 			}
 		}
 	}
-	if (toClose.length === 0) {
+	if (toClose.length === 0 && closedPanels === 0) {
 		return {
 			content: [{ type: 'text', text: 'No diff tabs to close' }],
 		};
 	}
 	try {
-		await vscode.window.tabGroups.close(toClose);
+		if (toClose.length > 0) {
+			await vscode.window.tabGroups.close(toClose);
+		}
+		const total = toClose.length + closedPanels;
 		return {
 			content: [
 				{
 					type: 'text',
-					text: `Closed ${toClose.length} diff tab(s)`,
+					text: `Closed ${total} diff tab(s)`,
 				},
 			],
 		};
