@@ -240,8 +240,122 @@ function handleToolsList(): unknown {
 					required: ['old_file_path', 'new_file_contents'],
 				},
 			},
+			{
+				name: 'close_tab',
+				description: 'Close a tab by its label (title shown on the tab).',
+				inputSchema: {
+					type: 'object',
+					properties: {
+						tab_name: {
+							type: 'string',
+							description: 'Label of the tab to close.',
+						},
+					},
+					required: ['tab_name'],
+				},
+			},
+			{
+				name: 'closeAllDiffTabs',
+				description: 'Close every open diff tab.',
+				inputSchema: {
+					type: 'object',
+					properties: {},
+				},
+			},
 		],
 	};
+}
+
+function isDiffTab(tab: vscode.Tab): boolean {
+	const input = tab.input as
+		| { original?: vscode.Uri; modified?: vscode.Uri }
+		| undefined;
+	return Boolean(input?.original && input?.modified);
+}
+
+async function handleCloseTab(
+	args: Record<string, unknown> | undefined,
+): Promise<unknown> {
+	const tabName = args?.tab_name as string | undefined;
+	if (!tabName) {
+		return {
+			content: [{ type: 'text', text: 'Error: tab_name is required' }],
+			isError: true,
+		};
+	}
+	const toClose: vscode.Tab[] = [];
+	for (const group of vscode.window.tabGroups.all) {
+		for (const tab of group.tabs) {
+			if (tab.label === tabName) {
+				toClose.push(tab);
+			}
+		}
+	}
+	if (toClose.length === 0) {
+		return {
+			content: [
+				{ type: 'text', text: `No tab found with name: ${tabName}` },
+			],
+		};
+	}
+	try {
+		await vscode.window.tabGroups.close(toClose);
+		return {
+			content: [
+				{
+					type: 'text',
+					text: `Closed ${toClose.length} tab(s) named "${tabName}"`,
+				},
+			],
+		};
+	} catch (err) {
+		return {
+			content: [
+				{
+					type: 'text',
+					text: `Error closing tab: ${(err as Error).message}`,
+				},
+			],
+			isError: true,
+		};
+	}
+}
+
+async function handleCloseAllDiffTabs(): Promise<unknown> {
+	const toClose: vscode.Tab[] = [];
+	for (const group of vscode.window.tabGroups.all) {
+		for (const tab of group.tabs) {
+			if (isDiffTab(tab)) {
+				toClose.push(tab);
+			}
+		}
+	}
+	if (toClose.length === 0) {
+		return {
+			content: [{ type: 'text', text: 'No diff tabs to close' }],
+		};
+	}
+	try {
+		await vscode.window.tabGroups.close(toClose);
+		return {
+			content: [
+				{
+					type: 'text',
+					text: `Closed ${toClose.length} diff tab(s)`,
+				},
+			],
+		};
+	} catch (err) {
+		return {
+			content: [
+				{
+					type: 'text',
+					text: `Error closing diff tabs: ${(err as Error).message}`,
+				},
+			],
+			isError: true,
+		};
+	}
 }
 
 async function handleOpenFile(
@@ -584,6 +698,10 @@ async function handleToolCall(
 		return handleOpenFile(args);
 	} else if (name === 'openDiff') {
 		return handleOpenDiff(args);
+	} else if (name === 'close_tab') {
+		return handleCloseTab(args);
+	} else if (name === 'closeAllDiffTabs') {
+		return handleCloseAllDiffTabs();
 	}
 	return { error: { code: -32601, message: `Unknown tool: ${name}` } };
 }
