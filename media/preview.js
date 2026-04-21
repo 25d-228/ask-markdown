@@ -386,6 +386,7 @@
 		rawSource = sourceTextarea.value;
 		updateHighlight();
 		updateLineNumbers();
+		refreshSearchIfActive();
 
 		if (editTimer) {
 			clearTimeout(editTimer);
@@ -396,10 +397,15 @@
 		}, 150);
 	});
 
-	// Sync scroll between textarea, highlight div, and line numbers
+	// Sync scroll between textarea, highlight div, search overlay, and line numbers
 	sourceTextarea.addEventListener('scroll', function () {
 		sourceHighlight.scrollTop = sourceTextarea.scrollTop;
 		sourceHighlight.scrollLeft = sourceTextarea.scrollLeft;
+		var overlay = document.getElementById('source-search-overlay');
+		if (overlay) {
+			overlay.scrollTop = sourceTextarea.scrollTop;
+			overlay.scrollLeft = sourceTextarea.scrollLeft;
+		}
 		syncGutterScroll();
 	});
 
@@ -557,15 +563,333 @@
 		}
 	}
 
+	// ── Search ──
+	//
+	// Rendered view: walk text nodes in #content, wrap matches in <mark>.
+	// Source view: build an absolutely-positioned overlay mirroring the
+	// textarea text with matches wrapped in <mark>; the textarea itself
+	// has transparent text, so the overlay's marks show through.
+	//
+	// Navigation uses smartScroll for smooth-on-short / instant-on-far.
+	// The search bar stays focused on Enter/Shift+Enter — never steals
+	// focus from the user.
+
+	var searchInput = document.getElementById('search-input');
+	var searchCount = document.getElementById('search-count');
+	var searchPrev = document.getElementById('search-prev');
+	var searchNext = document.getElementById('search-next');
+	var searchClear = document.getElementById('search-clear');
+	var sourceSearchOverlay = document.getElementById('source-search-overlay');
+
+	var searchQuery = '';
+	// In preview mode, entries are <mark> elements. In source mode, entries
+	// are { start, end, el } where el is the overlay <mark>.
+	var searchMatches = [];
+	var searchIndex = 0;
+	var searchInputDebounce = null;
+
+	function clearSearchMarks() {
+		var rendered = contentEl.querySelectorAll('.search-match');
+		for (var i = 0; i < rendered.length; i++) {
+			var mk = rendered[i];
+			var parent = mk.parentNode;
+			if (!parent) continue;
+			while (mk.firstChild) {
+				parent.insertBefore(mk.firstChild, mk);
+			}
+			parent.removeChild(mk);
+		}
+		contentEl.normalize();
+		sourceSearchOverlay.innerHTML = '';
+	}
+
+	function wrapPreviewMatches(textNode, queryLower, queryLen, out) {
+		var text = textNode.nodeValue;
+		var lower = text.toLowerCase();
+		var pos = 0;
+		var parent = textNode.parentNode;
+		var frag = document.createDocumentFragment();
+		while (pos <= text.length) {
+			var idx = lower.indexOf(queryLower, pos);
+			if (idx === -1) {
+				if (pos < text.length) {
+					frag.appendChild(
+						document.createTextNode(text.substring(pos))
+					);
+				}
+				break;
+			}
+			if (idx > pos) {
+				frag.appendChild(
+					document.createTextNode(text.substring(pos, idx))
+				);
+			}
+			var mk = document.createElement('mark');
+			mk.className = 'search-match';
+			mk.textContent = text.substring(idx, idx + queryLen);
+			frag.appendChild(mk);
+			out.push(mk);
+			pos = idx + queryLen;
+		}
+		parent.replaceChild(frag, textNode);
+	}
+
+	function runPreviewSearch(query) {
+		var matches = [];
+		if (!query) return matches;
+		var qLower = query.toLowerCase();
+		var qLen = query.length;
+		var walker = document.createTreeWalker(
+			contentEl,
+			NodeFilter.SHOW_TEXT,
+			{
+				acceptNode: function (n) {
+					if (!n.nodeValue || !n.parentNode) {
+						return NodeFilter.FILTER_REJECT;
+					}
+					var p = n.parentElement;
+					if (p && (p.tagName === 'SCRIPT' || p.tagName === 'STYLE')) {
+						return NodeFilter.FILTER_REJECT;
+					}
+					return NodeFilter.FILTER_ACCEPT;
+				},
+			}
+		);
+		var pending = [];
+		var node;
+		while ((node = walker.nextNode())) {
+			if (node.nodeValue.toLowerCase().indexOf(qLower) !== -1) {
+				pending.push(node);
+			}
+		}
+		for (var i = 0; i < pending.length; i++) {
+			wrapPreviewMatches(pending[i], qLower, qLen, matches);
+		}
+		return matches;
+	}
+
+	function runSourceSearch(query) {
+		var text = sourceTextarea.value;
+		if (!query) {
+			sourceSearchOverlay.innerHTML = '';
+			return [];
+		}
+		var lower = text.toLowerCase();
+		var qLower = query.toLowerCase();
+		var qLen = query.length;
+		var html = '';
+		var pos = 0;
+		var entries = [];
+		while (pos <= text.length) {
+			var idx = lower.indexOf(qLower, pos);
+			if (idx === -1) {
+				html += escapeHtml(text.substring(pos));
+				break;
+			}
+			if (idx > pos) {
+				html += escapeHtml(text.substring(pos, idx));
+			}
+			html +=
+				'<mark class="search-match">' +
+				escapeHtml(text.substring(idx, idx + qLen)) +
+				'</mark>';
+			entries.push({ start: idx, end: idx + qLen, el: null });
+			pos = idx + qLen;
+		}
+		sourceSearchOverlay.innerHTML = html;
+		sourceSearchOverlay.scrollTop = sourceTextarea.scrollTop;
+		sourceSearchOverlay.scrollLeft = sourceTextarea.scrollLeft;
+		var els = sourceSearchOverlay.querySelectorAll('.search-match');
+		for (var i = 0; i < entries.length; i++) {
+			entries[i].el = els[i];
+		}
+		return entries;
+	}
+
+	function updateSearchUI() {
+		if (!searchQuery) {
+			searchCount.textContent = '';
+		} else if (searchMatches.length === 0) {
+			searchCount.textContent = '0/0';
+		} else {
+			searchCount.textContent =
+				searchIndex + 1 + '/' + searchMatches.length;
+		}
+		var empty = searchMatches.length === 0;
+		searchPrev.disabled = empty;
+		searchNext.disabled = empty;
+	}
+
+	function markCurrentClass() {
+		for (var i = 0; i < searchMatches.length; i++) {
+			var el =
+				mode === 'preview'
+					? searchMatches[i]
+					: searchMatches[i].el;
+			if (el && el.classList) el.classList.remove('current');
+		}
+		var cur =
+			mode === 'preview'
+				? searchMatches[searchIndex]
+				: searchMatches[searchIndex] && searchMatches[searchIndex].el;
+		if (cur && cur.classList) cur.classList.add('current');
+	}
+
+	function jumpToCurrent() {
+		if (searchMatches.length === 0) return;
+		if (mode === 'preview') {
+			var el = searchMatches[searchIndex];
+			if (!el) return;
+			var target = el.offsetTop - contentScroll.clientHeight / 3;
+			smartScroll(contentScroll, Math.max(0, target));
+		} else {
+			var m = searchMatches[searchIndex];
+			if (!m) return;
+			var before = sourceTextarea.value.substring(0, m.start);
+			var line = before.split('\n').length;
+			var lh =
+				parseFloat(getComputedStyle(sourceTextarea).lineHeight) || 20;
+			var target2 = (line - 1) * lh - sourceTextarea.clientHeight / 3;
+			smartScroll(sourceTextarea, Math.max(0, target2));
+			requestAnimationFrame(function () {
+				sourceSearchOverlay.scrollTop = sourceTextarea.scrollTop;
+				sourceSearchOverlay.scrollLeft = sourceTextarea.scrollLeft;
+				sourceHighlight.scrollTop = sourceTextarea.scrollTop;
+				syncGutterScroll();
+			});
+		}
+	}
+
+	function runSearch(query, keepIndex) {
+		clearSearchMarks();
+		searchQuery = query;
+		if (!query) {
+			searchMatches = [];
+			searchIndex = 0;
+			updateSearchUI();
+			return;
+		}
+		if (mode === 'preview') {
+			searchMatches = runPreviewSearch(query);
+		} else {
+			searchMatches = runSourceSearch(query);
+		}
+		if (!keepIndex) {
+			searchIndex = 0;
+		} else {
+			searchIndex = Math.min(
+				searchIndex,
+				Math.max(0, searchMatches.length - 1)
+			);
+		}
+		if (searchMatches.length > 0) {
+			markCurrentClass();
+			jumpToCurrent();
+		}
+		updateSearchUI();
+	}
+
+	function advanceSearch(delta) {
+		if (searchMatches.length === 0) return;
+		searchIndex =
+			(searchIndex + delta + searchMatches.length) %
+			searchMatches.length;
+		markCurrentClass();
+		jumpToCurrent();
+		updateSearchUI();
+	}
+
+	function clearSearch() {
+		if (searchInputDebounce) {
+			clearTimeout(searchInputDebounce);
+			searchInputDebounce = null;
+		}
+		searchInput.value = '';
+		searchQuery = '';
+		searchMatches = [];
+		searchIndex = 0;
+		clearSearchMarks();
+		updateSearchUI();
+	}
+
+	// Called from mode switches and host update messages. Cheap no-op when
+	// no search is active.
+	function refreshSearchIfActive() {
+		if (searchQuery) {
+			if (searchInputDebounce) {
+				clearTimeout(searchInputDebounce);
+			}
+			searchInputDebounce = setTimeout(function () {
+				searchInputDebounce = null;
+				runSearch(searchQuery, true);
+			}, 30);
+		}
+	}
+
+	searchInput.addEventListener('input', function () {
+		var q = searchInput.value;
+		if (searchInputDebounce) clearTimeout(searchInputDebounce);
+		searchInputDebounce = setTimeout(function () {
+			searchInputDebounce = null;
+			runSearch(q, false);
+		}, 80);
+	});
+
+	searchInput.addEventListener('keydown', function (e) {
+		if (e.key === 'Enter') {
+			e.preventDefault();
+			if (searchMatches.length === 0 && searchInput.value) {
+				// User hit Enter before debounce fired — run immediately.
+				if (searchInputDebounce) {
+					clearTimeout(searchInputDebounce);
+					searchInputDebounce = null;
+				}
+				runSearch(searchInput.value, false);
+				return;
+			}
+			advanceSearch(e.shiftKey ? -1 : 1);
+		} else if (e.key === 'Escape') {
+			e.preventDefault();
+			clearSearch();
+			searchInput.blur();
+		}
+	});
+
+	searchPrev.addEventListener('click', function () {
+		advanceSearch(-1);
+	});
+	searchNext.addEventListener('click', function () {
+		advanceSearch(1);
+	});
+	searchClear.addEventListener('click', function () {
+		clearSearch();
+		searchInput.focus();
+	});
+
 	// ── Toolbar events ──
 
 	toggleBtn.addEventListener('click', function () {
-		var line = topVisibleLine();
-		if (mode === 'preview') {
-			switchToSource(line, false);
+		// If the user has text selected in the current view, treat the
+		// toggle as a find-in: jump to the corresponding range in the
+		// target view, centered and selected. Otherwise, plain toggle
+		// to the top-visible line.
+		var range = selectionLineRange();
+		if (range) {
+			if (mode === 'preview') {
+				switchToSource(range.startLine, true, range);
+			} else {
+				switchToPreview(range.startLine, true, range);
+			}
+			suppressBarUntilInteraction = true;
 		} else {
-			switchToPreview(line, false);
+			var line = topVisibleLine();
+			if (mode === 'preview') {
+				switchToSource(line, false);
+			} else {
+				switchToPreview(line, false);
+			}
 		}
+		refreshSearchIfActive();
 	});
 
 	// Export to PDF via the browser print dialog. VS Code's Electron shell
@@ -1187,6 +1511,7 @@
 		} else if (msg.type === 'updateContent') {
 			contentEl.innerHTML = msg.body;
 			injectCopyButtons();
+			refreshSearchIfActive();
 		} else if (msg.type === 'updateSource') {
 			rawSource = msg.text;
 			if (mode === 'source' && !textareaEditing) {
@@ -1204,6 +1529,7 @@
 				updateLineNumbers();
 				sourceHighlight.scrollTop = scrollPos;
 				syncGutterScroll();
+				refreshSearchIfActive();
 			}
 		} else if (msg.type === 'updateShowFloatingButton') {
 			bar.style.display = 'none';

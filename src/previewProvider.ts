@@ -210,6 +210,13 @@ function buildHtml(
 <body>
 	<div id="app">
 		<div id="toolbar">
+			<div id="search-wrap">
+				<input id="search-input" type="text" placeholder="Search" autocomplete="off" spellcheck="false" />
+				<span id="search-count" aria-live="polite"></span>
+				<button id="search-prev" type="button" title="Previous (Shift+Enter)" disabled>&uarr;</button>
+				<button id="search-next" type="button" title="Next (Enter)" disabled>&darr;</button>
+				<button id="search-clear" type="button" title="Clear (Esc)">&times;</button>
+			</div>
 			<button id="toggle-source" title="Show Source">&lt;/&gt;</button>
 			<div id="export-pdf-wrap">
 				<button id="export-pdf" title="Export as PDF (choose &quot;Save as PDF&quot; in the print dialog)" aria-haspopup="menu" aria-expanded="false">PDF &#x25BE;</button>
@@ -240,6 +247,7 @@ function buildHtml(
 			<div id="source-view" style="display:none">
 				<div id="line-numbers" aria-hidden="true"></div>
 				<div id="source-highlight" aria-hidden="true"></div>
+				<div id="source-search-overlay" aria-hidden="true"></div>
 				<textarea id="source-editor" spellcheck="false" autocapitalize="off" autocomplete="off" wrap="off"></textarea>
 			</div>
 		</div>
