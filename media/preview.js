@@ -349,19 +349,36 @@
 
 	/** Select matching elements in preview by line range. */
 	function selectInPreview(startLine, endLine) {
+		// Markdown blocks nest, so every ancestor of the target line
+		// intersects [startLine, endLine] — picking first+last intersecting
+		// elements would bracket the whole outer container. Prefer elements
+		// whose range is *contained* by [startLine, endLine]: that picks
+		// the tightest block(s) that actually correspond to the range.
+		// Fall back to the narrowest intersecting element only if nothing
+		// is contained (e.g. the range falls inside one oversized block).
 		var all = contentEl.querySelectorAll('[data-source-line]');
-		var firstEl = null;
-		var lastEl = null;
+		var containedFirst = null;
+		var containedLast = null;
+		var narrowestIntersect = null;
+		var narrowestWidth = Infinity;
 		for (var i = 0; i < all.length; i++) {
 			var elStart = Number(all[i].dataset.sourceLine);
 			var elEnd = Number(all[i].dataset.sourceLineEnd || elStart);
-			if (elStart <= endLine && elEnd >= startLine) {
-				if (!firstEl) {
-					firstEl = all[i];
+			if (elStart >= startLine && elEnd <= endLine) {
+				if (!containedFirst) {
+					containedFirst = all[i];
 				}
-				lastEl = all[i];
+				containedLast = all[i];
+			} else if (elStart <= endLine && elEnd >= startLine) {
+				var width = elEnd - elStart;
+				if (width < narrowestWidth) {
+					narrowestIntersect = all[i];
+					narrowestWidth = width;
+				}
 			}
 		}
+		var firstEl = containedFirst || narrowestIntersect;
+		var lastEl = containedLast || narrowestIntersect;
 		if (!firstEl || !lastEl) {
 			return;
 		}
