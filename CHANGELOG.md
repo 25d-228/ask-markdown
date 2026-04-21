@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.26 - 2026-04-21
+
+- Render Claude Code diffs for markdown files as a side-by-side rendered preview with line-level red/green highlights and Accept/Reject buttons, instead of the plain source-text diff
+- Add a toolbar search bar next to `</>` that searches both rendered and source views, with ↑/↓ (or Enter / Shift+Enter) to jump between matches, a match counter, and smooth scrolling for nearby jumps
+- Make `</>` carry the current text selection to the other view (like "Find in source / Find in preview") when something is selected, instead of toggling to the top-visible line
+
 ## 0.3.25 - 2026-04-21
 
 - Scope the `close_tab` MCP tool to diff tabs so Claude Code's accept-diff flow no longer closes a plain editor the user already had open for the same file
