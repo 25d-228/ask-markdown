@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.4.0 - 2026-04-21
+
+- Promote the rendered markdown diff for Claude Code edits, the toolbar search bar, the selection-carrying `</>` toggle, and the terminal-driven accept/reject flow (shipped across 0.3.23–0.3.30) to the 0.4 line
+
 ## 0.3.30 - 2026-04-21
 
 - Fix caret position drift in source mode — the syntax-highlight layer was rendering bold / italic / padded inline-code, shifting highlighted text out of alignment with the textarea on top so clicks landed several characters off on any line with headings, bold, italic, or `code`
