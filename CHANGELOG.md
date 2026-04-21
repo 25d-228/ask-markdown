@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.3.23 - 2026-04-21
+
+- Close the Claude Edit diff tab automatically after the user saves (approves) the proposed change, instead of leaving it open pointing at a deleted temp file
+
 ## 0.3.22 - 2026-04-18
 
 - Fix source-mode scroll drift where the syntax-highlighted layer moved at a different range than the textarea — the highlight renderer was appending an extra trailing newline on top of the one `split('\n')` already reconstructs, making the highlight div one line taller than the textarea and causing the visible text to slide out of alignment with the cursor and selection during scroll
