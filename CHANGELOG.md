@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.3.25 - 2026-04-21
+
+- Scope the `close_tab` MCP tool to diff tabs so Claude Code's accept-diff flow no longer closes a plain editor the user already had open for the same file
+
 ## 0.3.24 - 2026-04-21
 
 - Advertise `close_tab` and `closeAllDiffTabs` MCP tools so Claude Code's accept-diff flow can dismiss the diff tab it opened, instead of leaving it behind after the edit lands
