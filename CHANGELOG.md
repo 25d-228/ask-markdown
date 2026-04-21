@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.3.30 - 2026-04-21
+
+- Fix caret position drift in source mode — the syntax-highlight layer was rendering bold / italic / padded inline-code, shifting highlighted text out of alignment with the textarea on top so clicks landed several characters off on any line with headings, bold, italic, or `code`
+- Fix `</>` selecting the entire outer block when carrying a single-line selection back from source to preview — `selectInPreview` now picks the tightest element whose range fits inside the source line range, instead of the outermost intersecting ancestor
+
 ## 0.3.29 - 2026-04-21
 
 - Close the rendered markdown diff tab reliably after the user accepts in the Claude Code terminal — `close_tab` now dispatches directly to tracked panels by `tab_name`, and a file-system watcher also dismisses the panel as soon as the proposed contents land on disk
