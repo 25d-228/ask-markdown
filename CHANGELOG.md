@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.3.27 - 2026-04-21
+
+- Fix a regression in 0.3.26 where opening a markdown file with Ask Markdown hung on the loading progress bar — the rendered-diff module introduced an import cycle that caused the extension to fail activation silently
+
 ## 0.3.26 - 2026-04-21
 
 - Render Claude Code diffs for markdown files as a side-by-side rendered preview with line-level red/green highlights and Accept/Reject buttons, instead of the plain source-text diff
