@@ -283,10 +283,13 @@ async function handleCloseTab(
 			isError: true,
 		};
 	}
+	// Scope to diff tabs. Claude Code passes the filename as tab_name, which
+	// collides with the label of any plain editor the user already had open
+	// for the same file — matching by label alone would close their tab too.
 	const toClose: vscode.Tab[] = [];
 	for (const group of vscode.window.tabGroups.all) {
 		for (const tab of group.tabs) {
-			if (tab.label === tabName) {
+			if (tab.label === tabName && isDiffTab(tab)) {
 				toClose.push(tab);
 			}
 		}
