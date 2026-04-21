@@ -1,6 +1,5 @@
 import * as vscode from 'vscode';
 import * as fs from 'fs';
-import * as path from 'path';
 import { createMarkdownIt } from './markdownRenderer';
 
 const md = createMarkdownIt();
@@ -144,13 +143,6 @@ function buildDiffHtml(
 </head>
 <body>
 <div id="diff-root">
-	<div id="diff-toolbar">
-		<span id="diff-title">${escapeHtml(data.tabName)}</span>
-		<div class="diff-actions">
-			<button id="reject-btn" type="button" title="Reject (Esc)">Reject</button>
-			<button id="accept-btn" type="button" title="Accept (Ctrl/Cmd+Enter)">Accept</button>
-		</div>
-	</div>
 	<div id="diff-panes">
 		<div class="diff-pane" id="old-pane">
 			<div class="diff-pane-label">Original</div>
@@ -187,27 +179,6 @@ async function readOldContents(oldUri: vscode.Uri, oldPath: string): Promise<str
 			return '';
 		}
 	}
-}
-
-async function applyAccept(
-	oldUri: vscode.Uri,
-	oldPath: string,
-	newContents: string,
-): Promise<void> {
-	if (fs.existsSync(oldPath)) {
-		const doc = await vscode.workspace.openTextDocument(oldUri);
-		const fullRange = new vscode.Range(
-			doc.positionAt(0),
-			doc.positionAt(doc.getText().length),
-		);
-		const edit = new vscode.WorkspaceEdit();
-		edit.replace(oldUri, fullRange, newContents);
-		await vscode.workspace.applyEdit(edit);
-		await doc.save();
-		return;
-	}
-	fs.mkdirSync(path.dirname(oldPath), { recursive: true });
-	fs.writeFileSync(oldPath, newContents, 'utf8');
 }
 
 export async function openRenderedMarkdownDiff(
@@ -252,6 +223,12 @@ export async function openRenderedMarkdownDiff(
 		},
 	);
 
+	// No in-webview Accept/Reject: the decision is driven from the Claude
+	// Code terminal. On accept, Claude writes the file (via its own Edit
+	// tool) and calls close_tab to dismiss this webview. On reject, Claude
+	// just calls close_tab without writing. Either way the panel disposes,
+	// at which point we compare the file on disk to the proposed contents:
+	// a match means Claude wrote it (FILE_SAVED), otherwise DIFF_REJECTED.
 	return new Promise<DiffResult>((resolve) => {
 		let resolved = false;
 		const finish = (result: DiffResult): void => {
@@ -262,23 +239,16 @@ export async function openRenderedMarkdownDiff(
 			resolve(result);
 		};
 
-		panel.webview.onDidReceiveMessage(async (msg: { type?: string }) => {
-			if (msg?.type === 'accept') {
-				try {
-					await applyAccept(oldUri, opts.oldPath, opts.newContents);
-					finish('FILE_SAVED');
-				} catch {
-					finish('DIFF_REJECTED');
-				}
-				panel.dispose();
-			} else if (msg?.type === 'reject') {
-				finish('DIFF_REJECTED');
-				panel.dispose();
-			}
-		});
-
 		panel.onDidDispose(() => {
-			finish('DIFF_REJECTED');
+			let current = '';
+			try {
+				current = fs.readFileSync(opts.oldPath, 'utf8');
+			} catch {
+				current = '';
+			}
+			finish(
+				current === opts.newContents ? 'FILE_SAVED' : 'DIFF_REJECTED',
+			);
 		});
 	});
 }

@@ -1,7 +1,6 @@
 (function () {
 	'use strict';
 
-	var vscode = acquireVsCodeApi();
 	var data = window.__diffData__ || { removedLines: [], addedLines: [] };
 	var removed = new Set(data.removedLines || []);
 	var added = new Set(data.addedLines || []);
@@ -39,34 +38,9 @@
 		}
 	}
 
-	function wireButtons() {
-		var acceptBtn = document.getElementById('accept-btn');
-		var rejectBtn = document.getElementById('reject-btn');
-		if (acceptBtn) {
-			acceptBtn.addEventListener('click', function () {
-				vscode.postMessage({ type: 'accept' });
-			});
-		}
-		if (rejectBtn) {
-			rejectBtn.addEventListener('click', function () {
-				vscode.postMessage({ type: 'reject' });
-			});
-		}
-		window.addEventListener('keydown', function (e) {
-			if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
-				e.preventDefault();
-				vscode.postMessage({ type: 'accept' });
-			} else if (e.key === 'Escape') {
-				e.preventDefault();
-				vscode.postMessage({ type: 'reject' });
-			}
-		});
-	}
-
 	function init() {
 		markPane('old-pane', removed, 'diff-removed');
 		markPane('new-pane', added, 'diff-added');
-		wireButtons();
 		scrollToFirstChange();
 	}
 

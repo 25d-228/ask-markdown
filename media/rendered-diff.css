@@ -17,57 +17,6 @@ body {
 	height: 100vh;
 }
 
-#diff-toolbar {
-	display: flex;
-	align-items: center;
-	gap: 8px;
-	padding: 6px 12px;
-	border-bottom: 1px solid var(--vscode-panel-border);
-	background: var(--vscode-editor-background);
-	flex-shrink: 0;
-}
-
-#diff-title {
-	flex: 1;
-	font-weight: 600;
-	font-size: 12px;
-	overflow: hidden;
-	text-overflow: ellipsis;
-	white-space: nowrap;
-	color: var(--vscode-editor-foreground);
-}
-
-.diff-actions {
-	display: flex;
-	gap: 6px;
-}
-
-#diff-toolbar button {
-	padding: 4px 14px;
-	border: 1px solid transparent;
-	border-radius: 2px;
-	cursor: pointer;
-	font: inherit;
-	font-size: 12px;
-}
-
-#accept-btn {
-	background: var(--vscode-button-background);
-	color: var(--vscode-button-foreground);
-}
-#accept-btn:hover {
-	background: var(--vscode-button-hoverBackground);
-}
-
-#reject-btn {
-	background: var(--vscode-button-secondaryBackground, transparent);
-	color: var(--vscode-button-secondaryForeground, var(--vscode-editor-foreground));
-	border-color: var(--vscode-panel-border);
-}
-#reject-btn:hover {
-	background: var(--vscode-button-secondaryHoverBackground, var(--vscode-toolbar-hoverBackground));
-}
-
 #diff-panes {
 	display: flex;
 	flex: 1;

@@ -270,9 +270,21 @@ function handleToolsList(): unknown {
 
 function isDiffTab(tab: vscode.Tab): boolean {
 	const input = tab.input as
-		| { original?: vscode.Uri; modified?: vscode.Uri }
+		| {
+				original?: vscode.Uri;
+				modified?: vscode.Uri;
+				viewType?: string;
+		  }
 		| undefined;
-	return Boolean(input?.original && input?.modified);
+	if (input?.original && input?.modified) {
+		return true;
+	}
+	// Treat our rendered-diff webview as a diff tab so Claude Code's
+	// close_tab / closeAllDiffTabs calls dismiss it after the CLI decision.
+	return (
+		typeof input?.viewType === 'string' &&
+		input.viewType.endsWith('askMarkdown.renderedDiff')
+	);
 }
 
 async function handleCloseTab(
