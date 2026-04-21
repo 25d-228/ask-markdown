@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.3.28 - 2026-04-21
+
+- Drop the Accept / Reject buttons from the rendered markdown diff — the decision is now driven entirely from the Claude Code terminal prompt, and the webview resolves `FILE_SAVED` or `DIFF_REJECTED` based on whether the file on disk matches the proposed contents once the panel is dismissed
+- Scope `close_tab` / `closeAllDiffTabs` to also dismiss the rendered-diff webview so Claude's post-decision close call clears the panel
+
 ## 0.3.27 - 2026-04-21
 
 - Fix a regression in 0.3.26 where opening a markdown file with Ask Markdown hung on the loading progress bar — the rendered-diff module introduced an import cycle that caused the extension to fail activation silently
