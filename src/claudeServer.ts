@@ -418,6 +418,23 @@ async function handleOpenDiff(
 		let resolved = false;
 		const disposables: vscode.Disposable[] = [];
 
+		const findDiffTab = (): vscode.Tab | undefined => {
+			for (const group of vscode.window.tabGroups.all) {
+				for (const tab of group.tabs) {
+					const input = tab.input as
+						| { modified?: vscode.Uri }
+						| undefined;
+					if (
+						input?.modified &&
+						input.modified.toString() === rightUri.toString()
+					) {
+						return tab;
+					}
+				}
+			}
+			return undefined;
+		};
+
 		const finish = (result: 'FILE_SAVED' | 'DIFF_REJECTED'): void => {
 			if (resolved) {
 				return;
@@ -425,6 +442,12 @@ async function handleOpenDiff(
 			resolved = true;
 			for (const d of disposables) {
 				d.dispose();
+			}
+			if (result === 'FILE_SAVED') {
+				const diffTab = findDiffTab();
+				if (diffTab) {
+					void vscode.window.tabGroups.close(diffTab);
+				}
 			}
 			try {
 				fs.unlinkSync(tempPath);
