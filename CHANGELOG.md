@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.3.24 - 2026-04-21
+
+- Advertise `close_tab` and `closeAllDiffTabs` MCP tools so Claude Code's accept-diff flow can dismiss the diff tab it opened, instead of leaving it behind after the edit lands
+
 ## 0.3.23 - 2026-04-21
 
 - Close the Claude Edit diff tab automatically after the user saves (approves) the proposed change, instead of leaving it open pointing at a deleted temp file
