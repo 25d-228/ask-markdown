@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.3.29 - 2026-04-21
+
+- Close the rendered markdown diff tab reliably after the user accepts in the Claude Code terminal — `close_tab` now dispatches directly to tracked panels by `tab_name`, and a file-system watcher also dismisses the panel as soon as the proposed contents land on disk
+
 ## 0.3.28 - 2026-04-21
 
 - Drop the Accept / Reject buttons from the rendered markdown diff — the decision is now driven entirely from the Claude Code terminal prompt, and the webview resolves `FILE_SAVED` or `DIFF_REJECTED` based on whether the file on disk matches the proposed contents once the panel is dismissed
