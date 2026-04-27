@@ -1,508 +1,17 @@
 import * as vscode from 'vscode';
-import { spawn, spawnSync } from 'child_process';
-import * as fs from 'fs';
-import * as https from 'https';
-import * as os from 'os';
-import * as path from 'path';
 import { toRange } from './sourceMapper';
 import { broadcast, isConnected, updateLatestSelection } from './claudeServer';
 import { createMarkdownIt } from './markdownRenderer';
+import { buildPreviewHtml } from './preview/html';
+import { exportPdf } from './preview/pdfExport';
+import { TranslateRunner } from './preview/translate';
+import { InlineEditRunner } from './preview/inlineEdit';
 
 // Re-exported so existing importers of `createMarkdownIt` from this module
-// keep working. The implementation lives in `markdownRenderer.ts` to avoid
-// an import cycle with `renderedDiff.ts` via `claudeServer.ts`.
+// keep working (notably the renderRule test suite).
 export { createMarkdownIt };
 
 const md = createMarkdownIt();
-
-function getNonce(): string {
-	const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
-	let nonce = '';
-	for (let i = 0; i < 32; i++) {
-		nonce += chars.charAt(Math.floor(Math.random() * chars.length));
-	}
-	return nonce;
-}
-
-function buildHtml(
-	webview: vscode.Webview,
-	extensionUri: vscode.Uri,
-	renderedBody: string,
-): string {
-	const nonce = getNonce();
-	const cssUri = webview.asWebviewUri(
-		vscode.Uri.joinPath(extensionUri, 'media', 'preview.css'),
-	);
-	const katexCssUri = webview.asWebviewUri(
-		vscode.Uri.joinPath(extensionUri, 'node_modules', 'katex', 'dist', 'katex.min.css'),
-	);
-	const jsUri = webview.asWebviewUri(
-		vscode.Uri.joinPath(extensionUri, 'media', 'preview.js'),
-	);
-
-	const csp = [
-		`default-src 'none'`,
-		`img-src ${webview.cspSource} data:`,
-		`style-src ${webview.cspSource} 'unsafe-inline'`,
-		`script-src 'nonce-${nonce}'`,
-		`font-src ${webview.cspSource}`,
-	].join('; ');
-
-	return /* html */ `<!DOCTYPE html>
-<html lang="en">
-<head>
-	<meta charset="UTF-8" />
-	<meta http-equiv="Content-Security-Policy" content="${csp}" />
-	<meta name="viewport" content="width=device-width, initial-scale=1.0" />
-	<link rel="stylesheet" href="${katexCssUri}" />
-	<link rel="stylesheet" href="${cssUri}" />
-	<title>Ask Markdown Preview</title>
-</head>
-<body>
-	<div id="app">
-		<div id="toolbar">
-			<div id="search-wrap">
-				<input id="search-input" type="text" placeholder="Search" autocomplete="off" spellcheck="false" />
-				<span id="search-count" aria-live="polite"></span>
-				<button id="search-prev" type="button" title="Previous (Shift+Enter)" disabled>&uarr;</button>
-				<button id="search-next" type="button" title="Next (Enter)" disabled>&darr;</button>
-				<button id="search-clear" type="button" title="Clear (Esc)">&times;</button>
-			</div>
-			<button id="toggle-source" title="Show Source">&lt;/&gt;</button>
-			<div id="export-pdf-wrap">
-				<button id="export-pdf" title="Export as PDF (choose &quot;Save as PDF&quot; in the print dialog)" aria-haspopup="menu" aria-expanded="false">PDF &#x25BE;</button>
-				<div id="export-pdf-menu" role="menu" hidden>
-					<button role="menuitem" data-pdf-style="clean">
-						<span class="pdf-menu-title">Clean</span>
-						<span class="pdf-menu-sub">White, minimal, printer-friendly</span>
-					</button>
-					<button role="menuitem" data-pdf-style="github">
-						<span class="pdf-menu-title">GitHub</span>
-						<span class="pdf-menu-sub">Sans-serif, subtle borders, README-style</span>
-					</button>
-					<button role="menuitem" data-pdf-style="academic">
-						<span class="pdf-menu-title">Academic</span>
-						<span class="pdf-menu-sub">Serif, off-white page, paper-like</span>
-					</button>
-					<button role="menuitem" data-pdf-style="theme">
-						<span class="pdf-menu-title">Keep Theme</span>
-						<span class="pdf-menu-sub">Export exactly what you see on screen</span>
-					</button>
-				</div>
-			</div>
-		</div>
-		<div id="view-container">
-			<div id="content-scroll">
-				<article id="content">${renderedBody}</article>
-			</div>
-			<div id="source-view" style="display:none">
-				<div id="line-numbers" aria-hidden="true"></div>
-				<div id="source-highlight" aria-hidden="true"></div>
-				<div id="source-search-overlay" aria-hidden="true"></div>
-				<textarea id="source-editor" spellcheck="false" autocapitalize="off" autocomplete="off" wrap="off"></textarea>
-			</div>
-		</div>
-	</div>
-	<div id="ask-bar">
-		<button data-action="claude">Add</button>
-		<span class="ask-bar-sep"></span>
-		<button data-action="edit">Inline Edit</button>
-		<span class="ask-bar-sep"></span>
-		<button data-action="translate">Translate</button>
-		<span class="ask-bar-sep"></span>
-		<button data-action="find">Find in source</button>
-	</div>
-	<div id="edit-bar">
-		<input id="edit-input" type="text" placeholder='e.g. "make this a numbered list"' autocomplete="off" spellcheck="false" />
-		<button id="edit-submit" type="button" title="Submit (Enter)">Edit</button>
-		<button id="edit-cancel" type="button" title="Cancel (Esc)">&times;</button>
-		<div id="edit-status" aria-live="polite">
-			<span class="edit-thinking">
-				<span class="edit-square"></span>
-				<span class="edit-square"></span>
-				<span class="edit-square"></span>
-			</span>
-			<span class="edit-status-text">Thinking\u2026</span>
-		</div>
-	</div>
-	<div id="translate-bar">
-		<div id="translate-header">
-			<span class="translate-title">Translation <span id="translate-lang"></span></span>
-			<button id="translate-close" type="button" title="Close (Esc)">&times;</button>
-		</div>
-		<div id="translate-status" aria-live="polite">
-			<span class="edit-thinking">
-				<span class="edit-square"></span>
-				<span class="edit-square"></span>
-				<span class="edit-square"></span>
-			</span>
-			<span class="translate-status-text">Thinking\u2026</span>
-		</div>
-		<div id="translate-content" aria-live="polite"></div>
-	</div>
-	<script nonce="${nonce}" src="${jsUri}"></script>
-</body>
-</html>`;
-}
-
-interface DictionaryPhonetic {
-	text?: string;
-	audio?: string;
-}
-
-interface DictionaryDefinition {
-	definition?: string;
-}
-
-interface DictionaryMeaning {
-	partOfSpeech?: string;
-	definitions?: DictionaryDefinition[];
-}
-
-interface DictionaryEntry {
-	word?: string;
-	phonetic?: string;
-	phonetics?: DictionaryPhonetic[];
-	meanings?: DictionaryMeaning[];
-}
-
-function pickIPA(entry: DictionaryEntry): string {
-	const phonetics = Array.isArray(entry.phonetics) ? entry.phonetics : [];
-	// Prefer the variant with a US audio URL.
-	for (const p of phonetics) {
-		if (
-			p &&
-			typeof p.text === 'string' &&
-			p.text &&
-			typeof p.audio === 'string' &&
-			/-us\.|_us\./i.test(p.audio)
-		) {
-			return p.text;
-		}
-	}
-	// Fallback: any phonetic text.
-	for (const p of phonetics) {
-		if (p && typeof p.text === 'string' && p.text) {
-			return p.text;
-		}
-	}
-	return entry.phonetic ?? '';
-}
-
-interface DictionaryRow {
-	pos: string;
-	definition: string;
-}
-
-interface FormattedDictionaryEntry {
-	ipa: string;
-	rows: DictionaryRow[];
-	fallback?: string;
-}
-
-function formatDictionaryEntry(
-	data: unknown,
-	word: string,
-): FormattedDictionaryEntry {
-	const entries = Array.isArray(data) ? (data as DictionaryEntry[]) : [];
-	if (entries.length === 0) {
-		return { ipa: '', rows: [], fallback: `No entry found for "${word}".` };
-	}
-
-	let ipa = '';
-	for (const entry of entries) {
-		ipa = pickIPA(entry);
-		if (ipa) {
-			break;
-		}
-	}
-
-	const rows: DictionaryRow[] = [];
-	for (const entry of entries) {
-		const meanings = Array.isArray(entry.meanings) ? entry.meanings : [];
-		for (const meaning of meanings) {
-			const pos = meaning.partOfSpeech ?? '';
-			const defs = Array.isArray(meaning.definitions)
-				? meaning.definitions
-				: [];
-			let count = 0;
-			for (const def of defs) {
-				if (count >= 2) {
-					break;
-				}
-				if (def && typeof def.definition === 'string' && def.definition) {
-					rows.push({ pos, definition: def.definition });
-					count++;
-				}
-			}
-		}
-	}
-
-	if (rows.length === 0) {
-		return {
-			ipa,
-			rows: [],
-			fallback: `No definitions available for "${word}".`,
-		};
-	}
-
-	return { ipa, rows };
-}
-
-function fileUrl(absolutePath: string): string {
-	let p = path.resolve(absolutePath).replace(/\\/g, '/');
-	if (!p.startsWith('/')) {
-		p = '/' + p;
-	}
-	return 'file://' + p.split('/').map(encodeURIComponent).join('/').replace(/%3A/gi, ':');
-}
-
-function findChromeExecutable(): string | undefined {
-	const exists = (p: string): boolean => {
-		try {
-			return fs.statSync(p).isFile();
-		} catch {
-			return false;
-		}
-	};
-
-	if (process.platform === 'darwin') {
-		const macCandidates = [
-			'/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
-			'/Applications/Chromium.app/Contents/MacOS/Chromium',
-			'/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge',
-			'/Applications/Brave Browser.app/Contents/MacOS/Brave Browser',
-		];
-		for (const c of macCandidates) {
-			if (exists(c)) {
-				return c;
-			}
-		}
-		return undefined;
-	}
-
-	if (process.platform === 'win32') {
-		const pf = process.env['ProgramFiles'] ?? 'C:\\Program Files';
-		const pf86 = process.env['ProgramFiles(x86)'] ?? 'C:\\Program Files (x86)';
-		const localAppData = process.env['LOCALAPPDATA'] ?? '';
-		const winCandidates = [
-			path.join(pf, 'Google', 'Chrome', 'Application', 'chrome.exe'),
-			path.join(pf86, 'Google', 'Chrome', 'Application', 'chrome.exe'),
-			localAppData
-				? path.join(localAppData, 'Google', 'Chrome', 'Application', 'chrome.exe')
-				: '',
-			path.join(pf, 'Microsoft', 'Edge', 'Application', 'msedge.exe'),
-			path.join(pf86, 'Microsoft', 'Edge', 'Application', 'msedge.exe'),
-			path.join(pf, 'Chromium', 'Application', 'chrome.exe'),
-		].filter(Boolean);
-		for (const c of winCandidates) {
-			if (exists(c)) {
-				return c;
-			}
-		}
-		return undefined;
-	}
-
-	// Linux / other unix
-	const names = [
-		'google-chrome-stable',
-		'google-chrome',
-		'chromium',
-		'chromium-browser',
-		'microsoft-edge',
-		'microsoft-edge-stable',
-		'brave-browser',
-	];
-	for (const name of names) {
-		const which = spawnSync('which', [name], { encoding: 'utf8' });
-		if (which.status === 0) {
-			const resolved = which.stdout.trim();
-			if (resolved && exists(resolved)) {
-				return resolved;
-			}
-		}
-	}
-	const linuxCandidates = [
-		'/usr/bin/google-chrome',
-		'/usr/bin/google-chrome-stable',
-		'/usr/bin/chromium',
-		'/usr/bin/chromium-browser',
-		'/snap/bin/chromium',
-		'/usr/bin/microsoft-edge',
-	];
-	for (const c of linuxCandidates) {
-		if (exists(c)) {
-			return c;
-		}
-	}
-	return undefined;
-}
-
-function buildPdfHtml(
-	renderedBody: string,
-	style: string,
-	themeClass: string,
-	docDir: string,
-	cssPath: string,
-	katexCssPath: string,
-): string {
-	const safeStyle = /^[a-z]+$/.test(style) ? style : 'clean';
-	return `<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8" />
-<base href="${fileUrl(docDir)}/" />
-<link rel="stylesheet" href="${fileUrl(katexCssPath)}" />
-<link rel="stylesheet" href="${fileUrl(cssPath)}" />
-<title>Ask Markdown PDF</title>
-</head>
-<body class="${themeClass} pdf-style-${safeStyle}">
-<div id="app">
-<div id="view-container">
-<div id="content-scroll">
-<article id="content">${renderedBody}</article>
-</div>
-</div>
-</div>
-</body>
-</html>`;
-}
-
-function runChromePdf(
-	chromeExec: string,
-	htmlPath: string,
-	pdfPath: string,
-): Promise<void> {
-	return new Promise((resolve, reject) => {
-		const args = [
-			'--headless=new',
-			'--disable-gpu',
-			'--no-sandbox',
-			'--no-pdf-header-footer',
-			'--hide-scrollbars',
-			`--print-to-pdf=${pdfPath}`,
-			fileUrl(htmlPath),
-		];
-		const proc = spawn(chromeExec, args, {
-			stdio: ['ignore', 'pipe', 'pipe'],
-		});
-		const errChunks: Buffer[] = [];
-		proc.stderr.on('data', (c: Buffer) => errChunks.push(c));
-		proc.on('error', reject);
-		proc.on('close', (code) => {
-			if (code === 0) {
-				resolve();
-			} else {
-				const detail = Buffer.concat(errChunks).toString().trim();
-				reject(
-					new Error(
-						`Chrome exited with code ${code}${detail ? ': ' + detail.slice(0, 500) : ''}`,
-					),
-				);
-			}
-		});
-	});
-}
-
-async function exportPdf(
-	document: vscode.TextDocument,
-	style: string,
-	extensionPath: string,
-): Promise<void> {
-	const chromeExec = findChromeExecutable();
-	if (!chromeExec) {
-		vscode.window.showErrorMessage(
-			'Ask Markdown: PDF export requires Google Chrome, Chromium, Microsoft Edge, or Brave to be installed.',
-		);
-		return;
-	}
-
-	const baseName = path.basename(document.uri.fsPath, '.md') || 'document';
-	const docDir =
-		document.uri.scheme === 'file'
-			? path.dirname(document.uri.fsPath)
-			: os.homedir();
-	const defaultUri = vscode.Uri.file(path.join(docDir, `${baseName}.pdf`));
-	const saveUri = await vscode.window.showSaveDialog({
-		defaultUri,
-		filters: { PDF: ['pdf'] },
-		saveLabel: 'Export PDF',
-	});
-	if (!saveUri) {
-		return;
-	}
-
-	const cssPath = path.join(extensionPath, 'media', 'preview.css');
-	const katexCssPath = path.join(
-		extensionPath,
-		'node_modules',
-		'katex',
-		'dist',
-		'katex.min.css',
-	);
-
-	const themeKind = vscode.window.activeColorTheme.kind;
-	// pdf-style-theme should preserve what the user sees; the other presets
-	// repaint the page with a light background, so pair them with the light
-	// hljs palette for legible code blocks.
-	let themeClass = 'vscode-light';
-	if (style === 'theme') {
-		if (themeKind === vscode.ColorThemeKind.Dark) {
-			themeClass = 'vscode-dark';
-		} else if (themeKind === vscode.ColorThemeKind.HighContrast) {
-			themeClass = 'vscode-high-contrast';
-		}
-	}
-
-	const source = document.getText();
-	const body = md.render(source, { source });
-	const html = buildPdfHtml(
-		body,
-		style,
-		themeClass,
-		docDir,
-		cssPath,
-		katexCssPath,
-	);
-
-	const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ask-markdown-pdf-'));
-	const tempHtmlPath = path.join(tempDir, 'doc.html');
-
-	await vscode.window.withProgress(
-		{
-			location: vscode.ProgressLocation.Notification,
-			title: 'Ask Markdown: exporting PDF…',
-			cancellable: false,
-		},
-		async () => {
-			try {
-				fs.writeFileSync(tempHtmlPath, html, 'utf8');
-				await runChromePdf(chromeExec, tempHtmlPath, saveUri.fsPath);
-			} finally {
-				try {
-					fs.rmSync(tempDir, { recursive: true, force: true });
-				} catch {
-					// ignore cleanup failure
-				}
-			}
-		},
-	).then(
-		async () => {
-			const pick = await vscode.window.showInformationMessage(
-				`PDF exported: ${path.basename(saveUri.fsPath)}`,
-				'Open',
-			);
-			if (pick === 'Open') {
-				await vscode.env.openExternal(saveUri);
-			}
-		},
-		(err: Error) => {
-			vscode.window.showErrorMessage(
-				`Ask Markdown: PDF export failed: ${err.message}`,
-			);
-		},
-	);
-}
 
 async function revealInSourceEditor(
 	document: vscode.TextDocument,
@@ -566,7 +75,7 @@ export class AskMarkdownEditorProvider implements vscode.CustomTextEditorProvide
 		const render = (): void => {
 			const source = document.getText();
 			const body = md.render(source, { source });
-			webviewPanel.webview.html = buildHtml(
+			webviewPanel.webview.html = buildPreviewHtml(
 				webviewPanel.webview,
 				this.context.extensionUri,
 				body,
@@ -615,8 +124,11 @@ export class AskMarkdownEditorProvider implements vscode.CustomTextEditorProvide
 
 		let scrollingFromPreview = false;
 		let scrollGuardTimer: ReturnType<typeof setTimeout> | null = null;
-		let inlineEditProc: ReturnType<typeof spawn> | null = null;
-		let translateAbort: AbortController | null = null;
+		const inlineEdit = new InlineEditRunner();
+		const translate = new TranslateRunner();
+		const post = (msg: { type: string; [key: string]: unknown }): void => {
+			webviewPanel.webview.postMessage(msg);
+		};
 
 		const scrollSubscription =
 			vscode.window.onDidChangeTextEditorVisibleRanges((e) => {
@@ -757,11 +269,6 @@ export class AskMarkdownEditorProvider implements vscode.CustomTextEditorProvide
 					edit.replace(document.uri, fullRange, newText);
 					await vscode.workspace.applyEdit(edit);
 				} else if (message.type === 'inlineEdit') {
-					if (inlineEditProc) {
-						inlineEditProc.kill();
-						inlineEditProc = null;
-					}
-
 					const startLine = Number(message.startLine);
 					const endLine = Number(message.endLine);
 					const selectedText = message.text as string;
@@ -769,242 +276,21 @@ export class AskMarkdownEditorProvider implements vscode.CustomTextEditorProvide
 						typeof message.instruction === 'string'
 							? message.instruction.trim()
 							: '';
-
-					if (!instruction) {
-						webviewPanel.webview.postMessage({
-							type: 'inlineEditError',
-							error: 'Empty instruction',
-						});
-						return;
-					}
-
-					// Write the current in-memory document content to a
-					// scratch file we own. Claude edits that copy; we apply
-					// the result back to the real document via WorkspaceEdit
-					// so the change goes through VS Code's normal text edit
-					// pipeline (undo-able, no file watcher dependency, works
-					// even when the document has unsaved changes).
-					const baseName = path.basename(document.uri.fsPath) || 'doc.md';
-					const safeBase = baseName.replace(/[^a-zA-Z0-9._-]/g, '_');
-					const tempPath = path.join(
-						os.tmpdir(),
-						`ask-markdown-edit-${Date.now()}-${safeBase}`,
-					);
-					try {
-						fs.writeFileSync(tempPath, document.getText(), 'utf8');
-					} catch (err) {
-						webviewPanel.webview.postMessage({
-							type: 'inlineEditError',
-							error: `Failed to create scratch file: ${(err as Error).message}`,
-						});
-						return;
-					}
-
-					const cleanup = (): void => {
-						try {
-							fs.unlinkSync(tempPath);
-						} catch {
-							// Already gone.
-						}
-					};
-
-					const prompt =
-						`File to edit: ${tempPath}\n` +
-						`Lines ${startLine}-${endLine} (1-based, inclusive) currently contain the text between the <selection> tags below:\n\n` +
-						`<selection>\n${selectedText}\n</selection>\n\n` +
-						`User instruction: ${instruction}\n\n` +
-						'Use your Edit tool to apply the instruction to the selected lines in the file. ' +
-						'Read the file first if you need surrounding context to make the old_string unique. ' +
-						'Output nothing — just edit the file and exit.';
-
-					const proc = spawn(
-						'claude',
-						[
-							'-p',
-							'--output-format', 'text',
-							'--model', 'sonnet',
-							'--allowedTools', 'Read,Edit',
-						],
-						{ stdio: ['pipe', 'pipe', 'pipe'] },
-					);
-					inlineEditProc = proc;
-
-					const errChunks: Buffer[] = [];
-					// Keep the tail of stdout so we can surface Claude's own
-					// complaint when exit is non-zero and stderr is empty.
-					const stdoutTailLimit = 4096;
-					let stdoutTail = '';
-
-					proc.stdout!.on('data', (data: Buffer) => {
-						stdoutTail = (stdoutTail + data.toString()).slice(
-							-stdoutTailLimit,
-						);
+					inlineEdit.start({
+						document,
+						startLine,
+						endLine,
+						selectedText,
+						instruction,
+						post,
 					});
-					proc.stderr!.on('data', (data: Buffer) => {
-						errChunks.push(data);
-					});
-
-					proc.on('close', async (code, signal) => {
-						if (inlineEditProc !== proc) {
-							return;
-						}
-						inlineEditProc = null;
-						if (signal === 'SIGTERM' || signal === 'SIGKILL') {
-							cleanup();
-							webviewPanel.webview.postMessage({
-								type: 'inlineEditDone',
-							});
-							return;
-						}
-						if (code !== 0) {
-							const stderr = Buffer.concat(errChunks)
-								.toString()
-								.trim();
-							const detail = stderr || stdoutTail.trim();
-							cleanup();
-							webviewPanel.webview.postMessage({
-								type: 'inlineEditError',
-								error: `Claude exited with code ${code}${detail ? ': ' + detail : ''}`,
-							});
-							return;
-						}
-						try {
-							const newContent = fs.readFileSync(tempPath, 'utf8');
-							if (newContent !== document.getText()) {
-								const fullRange = new vscode.Range(
-									document.positionAt(0),
-									document.positionAt(document.getText().length),
-								);
-								const edit = new vscode.WorkspaceEdit();
-								edit.replace(document.uri, fullRange, newContent);
-								await vscode.workspace.applyEdit(edit);
-							}
-							webviewPanel.webview.postMessage({
-								type: 'inlineEditDone',
-							});
-						} catch (err) {
-							webviewPanel.webview.postMessage({
-								type: 'inlineEditError',
-								error: `Failed to apply edit: ${(err as Error).message}`,
-							});
-						} finally {
-							cleanup();
-						}
-					});
-
-					proc.on('error', (err) => {
-						if (inlineEditProc !== proc) {
-							return;
-						}
-						inlineEditProc = null;
-						cleanup();
-						webviewPanel.webview.postMessage({
-							type: 'inlineEditError',
-							error: `Failed to run claude: ${err.message}`,
-						});
-					});
-
-					proc.stdin!.write(prompt);
-					proc.stdin!.end();
 				} else if (message.type === 'inlineEditCancel') {
-					if (inlineEditProc) {
-						inlineEditProc.kill();
-						inlineEditProc = null;
-					}
+					inlineEdit.cancel();
 				} else if (message.type === 'translate') {
-					if (translateAbort) {
-						translateAbort.abort();
-						translateAbort = null;
-					}
-
 					const selectedText = (message.text as string) || '';
-					const wordMatch = selectedText.match(/[a-zA-Z][a-zA-Z'-]*/);
-					const word = wordMatch ? wordMatch[0].toLowerCase() : '';
-
-					if (!word) {
-						webviewPanel.webview.postMessage({
-							type: 'translateError',
-							error: 'Select an English word to look up.',
-						});
-						return;
-					}
-
-					const url =
-						'https://api.dictionaryapi.dev/api/v2/entries/en/' +
-						encodeURIComponent(word);
-					const controller = new AbortController();
-					translateAbort = controller;
-
-					const req = https.get(
-						url,
-						{ signal: controller.signal },
-						(res) => {
-							const chunks: Buffer[] = [];
-							res.on('data', (chunk: Buffer) => chunks.push(chunk));
-							res.on('end', () => {
-								if (translateAbort !== controller) {
-									return;
-								}
-								translateAbort = null;
-
-								if (res.statusCode === 404) {
-									webviewPanel.webview.postMessage({
-										type: 'translateError',
-										error: `"${word}" not found in dictionary.`,
-									});
-									return;
-								}
-								if (res.statusCode !== 200) {
-									webviewPanel.webview.postMessage({
-										type: 'translateError',
-										error: `Lookup failed (HTTP ${res.statusCode ?? '?'}).`,
-									});
-									return;
-								}
-
-								try {
-									const data = JSON.parse(
-										Buffer.concat(chunks).toString(),
-									);
-									const formatted = formatDictionaryEntry(
-										data,
-										word,
-									);
-									webviewPanel.webview.postMessage({
-										type: 'translateResult',
-										ipa: formatted.ipa,
-										rows: formatted.rows,
-										fallback: formatted.fallback,
-										language: 'en',
-										streaming: false,
-									});
-								} catch (err) {
-									webviewPanel.webview.postMessage({
-										type: 'translateError',
-										error: `Failed to parse response: ${(err as Error).message}`,
-									});
-								}
-							});
-						},
-					);
-					req.on('error', (err) => {
-						if (translateAbort !== controller) {
-							return;
-						}
-						translateAbort = null;
-						if ((err as NodeJS.ErrnoException).code === 'ABORT_ERR') {
-							return;
-						}
-						webviewPanel.webview.postMessage({
-							type: 'translateError',
-							error: `Network error: ${err.message}`,
-						});
-					});
+					translate.start(selectedText, post);
 				} else if (message.type === 'translateCancel') {
-					if (translateAbort) {
-						translateAbort.abort();
-						translateAbort = null;
-					}
+					translate.cancel();
 				} else if (message.type === 'openLink') {
 					const href =
 						typeof message.href === 'string' ? message.href : '';
@@ -1037,7 +323,12 @@ export class AskMarkdownEditorProvider implements vscode.CustomTextEditorProvide
 				} else if (message.type === 'exportPdf') {
 					const style =
 						typeof message.style === 'string' ? message.style : 'clean';
-					await exportPdf(document, style, this.context.extensionPath);
+					await exportPdf(
+						document,
+						style,
+						this.context.extensionPath,
+						(source) => md.render(source, { source }),
+					);
 				}
 			},
 		);
@@ -1065,14 +356,8 @@ export class AskMarkdownEditorProvider implements vscode.CustomTextEditorProvide
 			scrollSubscription.dispose();
 			messageSubscription.dispose();
 			configSubscription.dispose();
-			if (inlineEditProc) {
-				inlineEditProc.kill();
-				inlineEditProc = null;
-			}
-			if (translateAbort) {
-				translateAbort.abort();
-				translateAbort = null;
-			}
+			inlineEdit.dispose();
+			translate.dispose();
 		});
 	}
 }

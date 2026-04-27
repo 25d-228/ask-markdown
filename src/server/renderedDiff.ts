@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
-import { createMarkdownIt } from './markdownRenderer';
+import { createMarkdownIt } from '../markdownRenderer';
 
 // Active rendered-diff panels keyed by the tab_name they were opened with.
 // claudeServer's close_tab / closeAllDiffTabs handlers reach these panels
