@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.5.0 - 2026-04-27
+
+- Refactor `src/` into focused modules under `preview/` and `server/`; no user-visible changes
+
 ## 0.4.0 - 2026-04-21
 
 - Promote the rendered markdown diff for Claude Code edits, the toolbar search bar, the selection-carrying `</>` toggle, and the terminal-driven accept/reject flow (shipped across 0.3.23–0.3.30) to the 0.4 line
