@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.5.1 - 2026-05-01
+
+- Maintenance release
+
 ## 0.5.0 - 2026-04-27
 
 - Refactor `src/` into focused modules under `preview/` and `server/`; no user-visible changes
