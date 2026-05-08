@@ -7,14 +7,14 @@ import {
 	listWorkspaceFolders,
 	removeLockFile,
 	writeLockFile,
-} from './server/lockFile';
+} from './lockFile';
 import {
 	handleCloseAllDiffTabs,
 	handleCloseTab,
 	handleOpenDiff,
 	handleOpenFile,
 	toolDefinitions,
-} from './server/tools';
+} from './tools';
 
 interface JsonRpcRequest {
 	jsonrpc: string;

@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import { toRange } from './sourceMapper';
-import { broadcast, isConnected, updateLatestSelection } from './claudeServer';
+import { broadcast, isConnected, updateLatestSelection } from './agents/mcp/server';
 import { createMarkdownIt } from './markdownRenderer';
 import { buildPreviewHtml } from './preview/html';
 import { exportPdf } from './preview/pdfExport';

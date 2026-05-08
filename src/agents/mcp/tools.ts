@@ -6,7 +6,7 @@ import {
 	disposeAllRenderedDiffs,
 	disposeRenderedDiffByTabName,
 	openRenderedMarkdownDiff,
-} from './renderedDiff';
+} from '../../preview/renderedDiff';
 
 const MARKDOWN_VIEW_TYPE = 'askMarkdown.preview';
 

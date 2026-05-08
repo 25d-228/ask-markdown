@@ -107,6 +107,7 @@
     "typescript-eslint": "^8.56.1"
   },
   "dependencies": {
+    "@agentclientprotocol/sdk": "^0.21.0",
     "highlight.js": "^11.11.1",
     "katex": "^0.16.45",
     "markdown-it": "^14.1.1",

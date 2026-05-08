@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import { AskMarkdownEditorProvider } from './previewProvider';
-import { startServer, stopServer } from './claudeServer';
+import { startServer, stopServer } from './agents/mcp/server';
 import {
 	readUriFromInput,
 	resolveTargetMarkdown,
